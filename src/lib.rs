@@ -5,17 +5,19 @@ pub struct Error;
 // TODO support non-uniform vector size piece inputs
 //  ((1, 1, 0),
 //   (1))
-pub fn solve_puzzle(board: &Vec<Vec<bool>>, pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<Vec<u16>>, Error> {
-    Ok(vec!(vec!(0, 1),
-                  vec!(1, 0)))
+pub fn solve_puzzle(
+    board: &Vec<Vec<bool>>,
+    pieces: &Vec<Vec<Vec<bool>>>,
+) -> Result<Vec<Vec<u16>>, Error> {
+    Ok(vec![vec![0, 1], vec![1, 0]])
 }
 
 fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<Vec<Vec<Vec<u8>>>>, Error> {
-    Ok(vec!(vec!(vec!(vec!(0, 1), vec!(1, 0)))))
+    Ok(vec![vec![vec![vec![0, 1], vec![1, 0]]]])
 }
 
 fn encode_piece(piece: &Vec<Vec<bool>>) -> Vec<Vec<u8>> {
-    vec!(vec!(0b0))
+    vec![vec![0b0]]
 }
 
 // copies and rotates a piece (90 degrees clockwise)
@@ -26,7 +28,7 @@ fn rotate_piece(piece: &Vec<Vec<bool>>) -> Vec<Vec<bool>> {
             rotated_piece[x_index][y_index] = val.clone();
         }
     }
-    return rotated_piece
+    return rotated_piece;
 }
 
 // copies and flips a piece
@@ -34,9 +36,12 @@ fn flip_piece(piece: &Vec<Vec<bool>>) -> Vec<Vec<bool>> {
     return piece.iter().rev().map(|y| y.clone()).collect();
 }
 
-fn attempt_move(board: &mut Vec<Vec<u16>>, pieces: &mut Vec<Vec<Vec<Vec<u8>>>>, pieces_used: &mut Vec<u8>) -> Result<Vec<Vec<u16>>, Error> {
-    Ok(vec!(vec!(0, 1),
-                     vec!(1, 0)))
+fn attempt_move(
+    board: &mut Vec<Vec<u16>>,
+    pieces: &mut Vec<Vec<Vec<Vec<u8>>>>,
+    pieces_used: &mut Vec<u8>,
+) -> Result<Vec<Vec<u16>>, Error> {
+    Ok(vec![vec![0, 1], vec![1, 0]])
 }
 
 #[cfg(test)]
@@ -48,9 +53,10 @@ mod tests {
         piece_flipped: Option<Vec<Vec<bool>>>,
         piece_rotated: Option<Vec<Vec<bool>>>,
         piece_encoded: Option<Vec<Vec<u8>>>,
-        piece_permuted: Option<Vec<Vec<Vec<u8>>>>
+        piece_permuted: Option<Vec<Vec<Vec<u8>>>>,
     }
 
+    #[rustfmt::skip]
     fn calendar_pieces() -> Vec<Piecemeal> {
         vec!(
             Piecemeal {
@@ -161,7 +167,7 @@ mod tests {
             }
         )
     }
-    
+
     #[test]
     fn flips_piece() {
         for piecemeal in calendar_pieces() {
@@ -179,5 +185,4 @@ mod tests {
             }
         }
     }
-
 }
