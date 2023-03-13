@@ -5,6 +5,8 @@ pub struct Error;
 // TODO support non-uniform vector size piece inputs
 //  ((1, 1, 0),
 //   (1))
+//
+// TODO support more than 8 pieces input
 pub fn solve_puzzle(
     board: &Vec<Vec<bool>>,
     pieces: &Vec<Vec<Vec<bool>>>,
@@ -36,9 +38,10 @@ fn flip_piece(piece: &Vec<Vec<bool>>) -> Vec<Vec<bool>> {
     return piece.iter().rev().map(|y| y.clone()).collect();
 }
 
+// TODO implement recursion once tracer round complete
 fn attempt_move(
     board: &mut Vec<Vec<u16>>,
-    pieces: &mut Vec<Vec<Vec<Vec<u8>>>>,
+    pieces_permuted: &mut Vec<Vec<Vec<Vec<u8>>>>,
     pieces_used: &mut Vec<u8>,
 ) -> Result<Vec<Vec<u16>>, Error> {
     Ok(vec![vec![0, 1], vec![1, 0]])
@@ -77,12 +80,23 @@ mod tests {
                     vec!(0, 0, 0, 1)
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect()),
                 piece_encoded: Some(vec!(
-                    vec!(0b10110, 0b10001),
-                    vec!(0b11010, 0b01001),
-                    vec!(0b11010, 0b00001),
-                    vec!(0b11000, 0b00001),
+                    vec!(0b_1_0110, 0b_1_0001),
+                    vec!(0b_1_1010, 0b_0_1001),
+                    vec!(0b_1_1010, 0b_0_0001),
+                    vec!(0b_1_1000, 0b_0_0001),
                 )),
-                piece_permuted: None
+                piece_permuted: Some(vec!(
+                    vec!(
+                        vec!(0b_1_0100, 0b_1_0101, 0b_1_0101, 0b_1_0011),
+                        vec!(0b_0_1000, 0b_0_1000, 0b_0_1100, 0b_1_1000),
+                    ),
+                    vec!(
+                        vec!(0b_1_0110, 0b_1_0001),
+                        vec!(0b_1_1010, 0b_0_1001),
+                        vec!(0b_1_1010, 0b_0_0001),
+                        vec!(0b_1_1000, 0b_0_0001),
+                    ),                    
+                )),  // TODO implement piece_permuted correctly & fully after tracer round
             },
             Piecemeal {
                 piece: vec!(
@@ -183,6 +197,49 @@ mod tests {
             if let Some(piece_rotated) = piecemeal.piece_rotated {
                 assert_eq!(piece_rotated, rotate_piece(&piecemeal.piece));
             }
+        }
+    }
+
+    #[test]
+    fn places_piece() {
+        // we want to test the following placement, where:
+        //  o = open space, c = closed space, x = placed piece
+        // o o o        o x x
+        // o o c   ->   o x c
+        // o o c        o x c
+        // o c c        o x c
+
+        // collect permuted pieces
+        let mut pieces_permuted = calendar_pieces()
+            .into_iter()
+            .filter(|p| p.piece_permuted.is_some())
+            .map(|p| p.piece_permuted.unwrap())
+            .collect();
+
+        // board encoding scheme: {3b': piece_used, 1b': is_board, 1'b: is_open, 4b': neighbors}
+        let mut board: Vec<Vec<u16>> = vec![
+            vec![0b_000_1_1_1001, 0b_000_1_1_1000, 0b_000_1_1_1110],
+            vec![0b_000_1_1_0001, 0b_000_1_1_0100, 0b_000_0_1_0000],
+            vec![0b_000_1_1_0001, 0b_000_1_1_0100, 0b_000_0_1_0000],
+            vec![0b_000_1_1_0011, 0b_000_1_1_0110, 0b_000_0_1_0000],
+        ];
+        let expected_board: Vec<Vec<u16>> = vec![
+            vec![0b_000_1_1_1101, 0b_001_1_0_1000, 0b_001_1_0_1110],
+            vec![0b_000_1_1_0101, 0b_001_1_0_0100, 0b_000_0_1_0000],
+            vec![0b_000_1_1_0101, 0b_001_1_0_0100, 0b_000_0_1_0000],
+            vec![0b_000_1_1_0111, 0b_001_1_0_0110, 0b_000_0_1_0000],
+        ];
+
+        // construct used pieces
+        let mut pieces_used: Vec<u8> = vec![3];
+        let expected_pieces_used: Vec<u8> = vec![3, 1];
+
+        // attempt the move
+        if let Ok(board) = attempt_move(&mut board, &mut pieces_permuted, &mut pieces_used) {
+            assert_eq!(expected_board, board);
+            assert_eq!(expected_pieces_used, pieces_used);
+        } else {
+            panic!("failed to attempt move")
         }
     }
 }
