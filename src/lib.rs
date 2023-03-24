@@ -1,4 +1,8 @@
 pub struct Error;
+enum Grid {
+    Board,
+    Piece,
+} // TODO include struct in enum once implemented
 
 // TODO make input generic
 // TODO support non-uniform vector size piece inputs
@@ -37,6 +41,92 @@ fn rotate_piece(piece: &Vec<Vec<bool>>) -> Vec<Vec<bool>> {
 // copies and flips a piece
 fn flip_piece(piece: &Vec<Vec<bool>>) -> Vec<Vec<bool>> {
     return piece.iter().rev().map(|y| y.clone()).collect();
+}
+
+fn calculate_neighbors(grid: &mut Vec<Vec<u16>>, grid_type: Grid) {
+    let grid_reference = grid.clone(); // avoid performance penalty by using unsafe rust when updating grid?
+    match grid_type {
+        Grid::Board => {
+            for (y_index, x_arr) in grid.iter_mut().enumerate() {
+                for (x_index, square) in x_arr.iter_mut().enumerate() {
+                    // don't need to calculate neighbors for off-board squares
+                    if *square | 0b_111_0_1_1111 == 0b_111_1_1_1111 {
+                        // avoid subtraction overflow if y_index is north edge
+                        if y_index == 0 {
+                            *square = *square | 0b_000_0_0_1000;
+                        } else {
+                            // get north square
+                            if let Some(x_arr2) = grid_reference.get(y_index - 1) {
+                                if let Some(north_square) = x_arr2.get(x_index) {
+                                    // if the north square is off the board or blocked
+                                    if *north_square & 0b_1_1_0000 != 0b_1_1_0000 {
+                                        *square = *square | 0b_000_0_0_1000;
+                                    } else {
+                                        *square = *square & 0b_111_1_1_0111; // north square is a valid, open space
+                                    }
+                                } else {
+                                    *square = *square | 0b_000_0_0_1000;
+                                }
+                            } else {
+                                *square = *square | 0b_000_0_0_1000;
+                            }
+                        }
+                        // get east square
+                        if let Some(x_arr2) = grid_reference.get(y_index) {
+                            if let Some(north_square) = x_arr2.get(x_index + 1) {
+                                // if the east square is off the board or blocked
+                                if *north_square & 0b_1_1_0000 != 0b_1_1_0000 {
+                                    *square = *square | 0b_000_0_0_0100;
+                                } else {
+                                    *square = *square & 0b_111_1_1_1011; // east square is a valid, open space
+                                }
+                            } else {
+                                *square = *square | 0b_000_0_0_0100;
+                            }
+                        } else {
+                            *square = *square | 0b_000_0_0_0100;
+                        }
+                        // get south square
+                        if let Some(x_arr2) = grid_reference.get(y_index + 1) {
+                            if let Some(north_square) = x_arr2.get(x_index) {
+                                // if the south square is off the board or blocked
+                                if *north_square & 0b_1_1_0000 != 0b_1_1_0000 {
+                                    *square = *square | 0b_000_0_0_0010;
+                                } else {
+                                    *square = *square & 0b_111_1_1_1101; // south square is a valid, open space
+                                }
+                            } else {
+                                *square = *square | 0b_000_0_0_0010;
+                            }
+                        } else {
+                            *square = *square | 0b_000_0_0_0010;
+                        }
+                        // avoid subtraction overflow if x_index is on west edge
+                        if x_index == 0 {
+                            *square = *square | 0b_000_0_0_0001;
+                        } else {
+                            // get west square
+                            if let Some(x_arr2) = grid_reference.get(y_index) {
+                                if let Some(north_square) = x_arr2.get(x_index - 1) {
+                                    // if the west square is off the board or blocked
+                                    if *north_square & 0b_1_1_0000 != 0b_1_1_0000 {
+                                        *square = *square | 0b_000_0_0_0001;
+                                    } else {
+                                        *square = *square & 0b_111_1_1_1110; // west square is a valid, open space
+                                    }
+                                } else {
+                                    *square = *square | 0b_000_0_0_0001;
+                                }
+                            } else {
+                                *square = *square | 0b_000_0_0_0001;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Grid::Piece => {}
+    }
 }
 
 fn attempt_move(
@@ -127,7 +217,7 @@ fn attempt_move(
                                         }
                                     }
                                 }
-                                // TODO populate_neighbors
+                                calculate_neighbors(&mut updated_board, Grid::Board);
                                 return Ok(updated_board);
                             }
                         }
@@ -318,11 +408,11 @@ mod tests {
             vec![0b_000_1_1_0011, 0b_000_1_1_0110, 0b_000_0_1_0000],
         ];
         let expected_board: Vec<Vec<u16>> = vec![
-            vec![0b_000_1_1_1001, 0b_001_1_0_0000, 0b_001_1_0_0000],
-            vec![0b_000_1_1_0001, 0b_001_1_0_0000, 0b_000_0_1_0000],
-            vec![0b_000_1_1_0001, 0b_001_1_0_0000, 0b_000_0_1_0000],
-            vec![0b_000_1_1_0011, 0b_001_1_0_0000, 0b_000_0_1_0000],
-        ]; // TODO update neighbors once populate_neighbors fn implemented & integrated
+            vec![0b_000_1_1_1101, 0b_001_1_0_1110, 0b_001_1_0_1111],
+            vec![0b_000_1_1_0101, 0b_001_1_0_1110, 0b_000_0_1_0000],
+            vec![0b_000_1_1_0101, 0b_001_1_0_1110, 0b_000_0_1_0000],
+            vec![0b_000_1_1_0111, 0b_001_1_0_1110, 0b_000_0_1_0000],
+        ];
 
         // attempt piece placement
         if let Ok(board) = attempt_move(board, pieces_permuted) {
