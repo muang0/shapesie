@@ -93,16 +93,15 @@ fn attempt_move(
                             let piece_is_blocked = piece.iter().enumerate().any(|(y_index_piece, x_arr2)| x_arr2.iter().enumerate().any(|(x_index_piece, piece_space)|
                                 // check if piece vector item corresponds to a piece square
                                 if piece_space & 0b_1_0000 == 0b_1_0000 {
-                                    // board oob protection
-                                    let board_y_index = y_index_board - y_index_piece_anchor + y_index_piece;
-                                    if board_y_index > board.len() { return true }
-                                    let board_x_index = x_index_board - x_index_piece_anchor + x_index_piece;
-                                    if board_x_index > board[y_index_board].len() { return true }
                                     // check if associated board square is open
-                                    if board[board_y_index][board_x_index] & 0b_1_1_0000 != 0b_1_1_0000 {
-                                        return true
-                                    } else { return false}
-                                } else {return false}
+                                    if let Some(x_arr2) = board.get(y_index_board - y_index_piece_anchor + y_index_piece) {
+                                        if let Some(piece) = x_arr2.get(x_index_board - x_index_piece_anchor + x_index_piece) {
+                                            if piece & 0b_1_1_0000 != 0b_1_1_0000 {
+                                                return true
+                                            }
+                                        }
+                                    } return false
+                                } else { return false }
                             ));
                             if !piece_is_blocked {
                                 let mut updated_board = board.clone();
@@ -110,18 +109,21 @@ fn attempt_move(
                                 for (y_index_piece, x_arr2) in piece.iter().enumerate() {
                                     for (x_index_piece, piece_space) in x_arr2.iter().enumerate() {
                                         if piece_space & 0b_1_0000 == 0b_1_0000 {
-                                            // already performed board oob checking above
-                                            let board_y_index = y_index_board
-                                                - y_index_piece_anchor
-                                                + y_index_piece;
-                                            let board_x_index = x_index_board
-                                                - x_index_piece_anchor
-                                                + x_index_piece;
-                                            updated_board[board_y_index][board_x_index] =
-                                                0b_000_1_0_0000;
-                                            updated_board[board_y_index][board_x_index] =
-                                                updated_board[board_y_index][board_x_index]
-                                                    | 0b_001_0_0_0000; // TODO how to set piece UID? Bubble up to library api?
+                                            if let Some(x_arr3) = updated_board.get_mut(
+                                                y_index_board - y_index_piece_anchor
+                                                    + y_index_piece,
+                                            ) {
+                                                if let Some(piece) = x_arr3.get_mut(
+                                                    x_index_board - x_index_piece_anchor
+                                                        + x_index_piece,
+                                                ) {
+                                                    *piece = 0b_001_1_0_0000 // TODO how to set piece UID? Bubble up to library api?
+                                                } else {
+                                                    return Err(Error);
+                                                }
+                                            } else {
+                                                return Err(Error);
+                                            }
                                         }
                                     }
                                 }
