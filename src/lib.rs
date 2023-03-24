@@ -1,8 +1,4 @@
 pub struct Error;
-enum Grid {
-    Board,
-    Piece,
-} // TODO include struct in enum once implemented
 
 // TODO make input generic
 // TODO support non-uniform vector size piece inputs
@@ -24,7 +20,23 @@ fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<Vec<Vec<Vec<u8>>>>
 }
 
 fn encode_piece(piece: &Vec<Vec<bool>>) -> Vec<Vec<u8>> {
-    vec![vec![0b0]]
+    let mut encoded_piece: Vec<Vec<u8>> = piece
+        .iter()
+        .map(|x_arr| {
+            x_arr
+                .iter()
+                .map(|is_piece| {
+                    if *is_piece {
+                        return 0b_1_0000;
+                    } else {
+                        return 0b_0_0000;
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    calculate_neighbors_piece(&mut encoded_piece);
+    return encoded_piece;
 }
 
 // copies and rotates a piece (90 degrees clockwise)
@@ -43,89 +55,239 @@ fn flip_piece(piece: &Vec<Vec<bool>>) -> Vec<Vec<bool>> {
     return piece.iter().rev().map(|y| y.clone()).collect();
 }
 
-fn calculate_neighbors(grid: &mut Vec<Vec<u16>>, grid_type: Grid) {
+fn calculate_neighbors_board(grid: &mut Vec<Vec<u16>>) {
+    // TODO refactor this mess
     let grid_reference = grid.clone(); // avoid performance penalty by using unsafe rust when updating grid?
-    match grid_type {
-        Grid::Board => {
-            for (y_index, x_arr) in grid.iter_mut().enumerate() {
-                for (x_index, square) in x_arr.iter_mut().enumerate() {
-                    // don't need to calculate neighbors for off-board squares
-                    if *square | 0b_111_0_1_1111 == 0b_111_1_1_1111 {
-                        // avoid subtraction overflow if y_index is north edge
-                        if y_index == 0 {
-                            *square = *square | 0b_000_0_0_1000;
-                        } else {
-                            // get north square
-                            if let Some(x_arr2) = grid_reference.get(y_index - 1) {
-                                if let Some(north_square) = x_arr2.get(x_index) {
-                                    // if the north square is off the board or blocked
-                                    if *north_square & 0b_1_1_0000 != 0b_1_1_0000 {
-                                        *square = *square | 0b_000_0_0_1000;
-                                    } else {
-                                        *square = *square & 0b_111_1_1_0111; // north square is a valid, open space
-                                    }
-                                } else {
-                                    *square = *square | 0b_000_0_0_1000;
-                                }
-                            } else {
+    for (y_index, x_arr) in grid.iter_mut().enumerate() {
+        for (x_index, square) in x_arr.iter_mut().enumerate() {
+            // don't need to calculate neighbors for off-board squares
+            if *square | 0b_111_0_1_1111 == 0b_111_1_1_1111 {
+                // avoid subtraction overflow if y_index is north edge
+                if y_index == 0 {
+                    *square = *square | 0b_000_0_0_1000;
+                } else {
+                    // get north square
+                    if let Some(x_arr2) = grid_reference.get(y_index - 1) {
+                        if let Some(north_square) = x_arr2.get(x_index) {
+                            // if the north square is off the board or blocked
+                            if *north_square & 0b_1_1_0000 != 0b_1_1_0000 {
                                 *square = *square | 0b_000_0_0_1000;
-                            }
-                        }
-                        // get east square
-                        if let Some(x_arr2) = grid_reference.get(y_index) {
-                            if let Some(north_square) = x_arr2.get(x_index + 1) {
-                                // if the east square is off the board or blocked
-                                if *north_square & 0b_1_1_0000 != 0b_1_1_0000 {
-                                    *square = *square | 0b_000_0_0_0100;
-                                } else {
-                                    *square = *square & 0b_111_1_1_1011; // east square is a valid, open space
-                                }
                             } else {
-                                *square = *square | 0b_000_0_0_0100;
+                                *square = *square & 0b_111_1_1_0111; // north square is a valid, open space
                             }
                         } else {
+                            *square = *square | 0b_000_0_0_1000;
+                        }
+                    } else {
+                        *square = *square | 0b_000_0_0_1000;
+                    }
+                }
+                // get east square
+                if let Some(x_arr2) = grid_reference.get(y_index) {
+                    if let Some(east_square) = x_arr2.get(x_index + 1) {
+                        // if the east square is off the board or blocked
+                        if *east_square & 0b_1_1_0000 != 0b_1_1_0000 {
                             *square = *square | 0b_000_0_0_0100;
-                        }
-                        // get south square
-                        if let Some(x_arr2) = grid_reference.get(y_index + 1) {
-                            if let Some(north_square) = x_arr2.get(x_index) {
-                                // if the south square is off the board or blocked
-                                if *north_square & 0b_1_1_0000 != 0b_1_1_0000 {
-                                    *square = *square | 0b_000_0_0_0010;
-                                } else {
-                                    *square = *square & 0b_111_1_1_1101; // south square is a valid, open space
-                                }
-                            } else {
-                                *square = *square | 0b_000_0_0_0010;
-                            }
                         } else {
+                            *square = *square & 0b_111_1_1_1011; // east square is a valid, open space
+                        }
+                    } else {
+                        *square = *square | 0b_000_0_0_0100;
+                    }
+                } else {
+                    *square = *square | 0b_000_0_0_0100;
+                }
+                // get south square
+                if let Some(x_arr2) = grid_reference.get(y_index + 1) {
+                    if let Some(south_square) = x_arr2.get(x_index) {
+                        // if the south square is off the board or blocked
+                        if *south_square & 0b_1_1_0000 != 0b_1_1_0000 {
                             *square = *square | 0b_000_0_0_0010;
-                        }
-                        // avoid subtraction overflow if x_index is on west edge
-                        if x_index == 0 {
-                            *square = *square | 0b_000_0_0_0001;
                         } else {
-                            // get west square
-                            if let Some(x_arr2) = grid_reference.get(y_index) {
-                                if let Some(north_square) = x_arr2.get(x_index - 1) {
-                                    // if the west square is off the board or blocked
-                                    if *north_square & 0b_1_1_0000 != 0b_1_1_0000 {
-                                        *square = *square | 0b_000_0_0_0001;
-                                    } else {
-                                        *square = *square & 0b_111_1_1_1110; // west square is a valid, open space
-                                    }
-                                } else {
-                                    *square = *square | 0b_000_0_0_0001;
-                                }
-                            } else {
-                                *square = *square | 0b_000_0_0_0001;
-                            }
+                            *square = *square & 0b_111_1_1_1101; // south square is a valid, open space
                         }
+                    } else {
+                        *square = *square | 0b_000_0_0_0010;
+                    }
+                } else {
+                    *square = *square | 0b_000_0_0_0010;
+                }
+                // avoid subtraction overflow if x_index is on west edge
+                if x_index == 0 {
+                    *square = *square | 0b_000_0_0_0001;
+                } else {
+                    // get west square
+                    if let Some(x_arr2) = grid_reference.get(y_index) {
+                        if let Some(west_square) = x_arr2.get(x_index - 1) {
+                            // if the west square is off the board or blocked
+                            if *west_square & 0b_1_1_0000 != 0b_1_1_0000 {
+                                *square = *square | 0b_000_0_0_0001;
+                            } else {
+                                *square = *square & 0b_111_1_1_1110; // west square is a valid, open space
+                            }
+                        } else {
+                            *square = *square | 0b_000_0_0_0001;
+                        }
+                    } else {
+                        *square = *square | 0b_000_0_0_0001;
                     }
                 }
             }
         }
-        Grid::Piece => {}
+    }
+}
+
+fn calculate_neighbors_piece(grid: &mut Vec<Vec<u8>>) {
+    // TODO refactor this mess
+    let grid_reference = grid.clone(); // avoid performance penalty by using unsafe rust when updating grid?
+    for (y_index, x_arr) in grid.iter_mut().enumerate() {
+        for (x_index, square) in x_arr.iter_mut().enumerate() {
+            // if square is part of a piece
+            if *square & 0b_1_0000 == 0b_1_0000 {
+                // avoid subtraction overflow if y_index is north edge
+                if y_index == 0 {
+                    *square = *square | 0b_1000;
+                } else {
+                    // get north square
+                    if let Some(x_arr2) = grid_reference.get(y_index - 1) {
+                        if let Some(north_square) = x_arr2.get(x_index) {
+                            // if the north square is a piece
+                            if *north_square & 0b_1_0000 == 0b_1_0000 {
+                                *square = *square & 0b_1_0111;
+                            } else {
+                                *square = *square | 0b_1000; // north square is an open space
+                            }
+                        } else {
+                            *square = *square | 0b_1000;
+                        }
+                    } else {
+                        *square = *square | 0b_1000;
+                    }
+                }
+                // get east square
+                if let Some(x_arr2) = grid_reference.get(y_index) {
+                    if let Some(east_square) = x_arr2.get(x_index + 1) {
+                        // if the east square is a piece
+                        if *east_square & 0b_1_0000 == 0b_1_0000 {
+                            *square = *square & 0b_1_1011;
+                        } else {
+                            *square = *square | 0b_0100; // east square is an open space
+                        }
+                    } else {
+                        *square = *square | 0b_0100;
+                    }
+                } else {
+                    *square = *square | 0b_0100;
+                }
+                // get south square
+                if let Some(x_arr2) = grid_reference.get(y_index + 1) {
+                    if let Some(south_square) = x_arr2.get(x_index) {
+                        // if the south square is a piece
+                        if *south_square & 0b_1_0000 == 0b_1_0000 {
+                            *square = *square & 0b_1_1101;
+                        } else {
+                            *square = *square | 0b_0010; // south square is an open space
+                        }
+                    } else {
+                        *square = *square | 0b_0010;
+                    }
+                } else {
+                    *square = *square | 0b_0010;
+                }
+                // avoid subtraction overflow if x_index is on west edge
+                if x_index == 0 {
+                    *square = *square | 0b_0001;
+                } else {
+                    // get west square
+                    if let Some(x_arr2) = grid_reference.get(y_index) {
+                        if let Some(west_square) = x_arr2.get(x_index - 1) {
+                            // if the west square is a piece
+                            if *west_square & 0b_1_0000 == 0b_1_0000 {
+                                *square = *square & 0b_1_1110;
+                            } else {
+                                *square = *square | 0b_0001; // west square is an open space
+                            }
+                        } else {
+                            *square = *square | 0b_0001;
+                        }
+                    } else {
+                        *square = *square | 0b_0001;
+                    }
+                }
+            } else {
+                // square is an open space
+                // avoid subtraction overflow if y_index is north edge
+                if y_index == 0 {
+                    *square = *square & 0b_0111;
+                } else {
+                    // get north square
+                    if let Some(x_arr2) = grid_reference.get(y_index - 1) {
+                        if let Some(north_square) = x_arr2.get(x_index) {
+                            // if the north square is a piece
+                            if *north_square & 0b_1_0000 == 0b_1_0000 {
+                                *square = *square | 0b_1000;
+                            } else {
+                                *square = *square & 0b_0111; // north square is an open space
+                            }
+                        } else {
+                            *square = *square & 0b_0111;
+                        }
+                    } else {
+                        *square = *square & 0b_0111;
+                    }
+                }
+                // get east square
+                if let Some(x_arr2) = grid_reference.get(y_index) {
+                    if let Some(east_square) = x_arr2.get(x_index + 1) {
+                        // if the east square is a piece
+                        if *east_square & 0b_1_0000 == 0b_1_0000 {
+                            *square = *square | 0b_0100;
+                        } else {
+                            *square = *square & 0b_1011; // east square is an open space
+                        }
+                    } else {
+                        *square = *square & 0b_1011;
+                    }
+                } else {
+                    *square = *square & 0b_1011;
+                }
+                // get south square
+                if let Some(x_arr2) = grid_reference.get(y_index + 1) {
+                    if let Some(south_square) = x_arr2.get(x_index) {
+                        // if the south square is a piece
+                        if *south_square & 0b_1_0000 == 0b_1_0000 {
+                            *square = *square | 0b_0010;
+                        } else {
+                            *square = *square & 0b_1101; // south square is an open space
+                        }
+                    } else {
+                        *square = *square & 0b_1101;
+                    }
+                } else {
+                    *square = *square & 0b_1101;
+                }
+                // avoid subtraction overflow if x_index is on west edge
+                if x_index == 0 {
+                    *square = *square & 0b_1110;
+                } else {
+                    // get west square
+                    if let Some(x_arr2) = grid_reference.get(y_index) {
+                        if let Some(west_square) = x_arr2.get(x_index - 1) {
+                            // if the west square is a piece
+                            if *west_square & 0b_1_0000 == 0b_1_0000 {
+                                *square = *square | 0b_0001;
+                            } else {
+                                *square = *square & 0b_1110; // west square is an open space
+                            }
+                        } else {
+                            *square = *square & 0b_1110;
+                        }
+                    } else {
+                        *square = *square & 0b_1110;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -175,7 +337,7 @@ fn attempt_move(
                     for (x_index_piece_anchor, piece_space_anchor) in x_arr.iter().enumerate() {
                         // piece anchor should fit onto the board's target space without any neighbor/wall conflicts
                         if piece_space_anchor & 0b_1_0000 == 0b_1_0000
-                            && !u16::from(*piece_space_anchor)
+                            && u16::from(*piece_space_anchor)
                                 & (board[y_index_board][x_index_board] & 0b_1111)
                                 == (board[y_index_board][x_index_board] & 0b_1111)
                         {
@@ -217,7 +379,7 @@ fn attempt_move(
                                         }
                                     }
                                 }
-                                calculate_neighbors(&mut updated_board, Grid::Board);
+                                calculate_neighbors_board(&mut updated_board);
                                 return Ok(updated_board);
                             }
                         }
@@ -239,7 +401,7 @@ mod tests {
         piece: Vec<Vec<bool>>,
         piece_flipped: Option<Vec<Vec<bool>>>,
         piece_rotated: Option<Vec<Vec<bool>>>,
-        piece_encoded: Option<Vec<Vec<u8>>>, // TODO, can instead use piece_permuted[0] for testing encoding func?
+        piece_encoded: Option<Vec<Vec<u8>>>,
         piece_permuted: Option<Vec<Vec<Vec<u8>>>>,
     }
 
@@ -264,21 +426,21 @@ mod tests {
                     vec!(0, 0, 0, 1)
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect()),
                 piece_encoded: Some(vec!(
-                    vec!(0b_1_0110, 0b_1_0001),
-                    vec!(0b_1_1010, 0b_0_1001),
-                    vec!(0b_1_1010, 0b_0_0001),
-                    vec!(0b_1_1000, 0b_0_0001),
+                    vec!(0b_1_1001, 0b_1_1110),
+                    vec!(0b_1_0101, 0b_0_1001),
+                    vec!(0b_1_0101, 0b_0_0001),
+                    vec!(0b_1_0111, 0b_0_0001),
                 )),
                 piece_permuted: Some(vec!(
                     vec!(
-                        vec!(0b_1_0100, 0b_1_0101, 0b_1_0101, 0b_1_0011),
-                        vec!(0b_0_1000, 0b_0_1000, 0b_0_1100, 0b_1_1000),
+                        vec!(0b_1_1011, 0b_1_1010, 0b_1_1010, 0b_1_1100),
+                        vec!(0b_0_1000, 0b_0_1000, 0b_0_1100, 0b_1_0111),
                     ),
                     vec!(
-                        vec!(0b_1_0110, 0b_1_0001),
-                        vec!(0b_1_1010, 0b_0_1001),
-                        vec!(0b_1_1010, 0b_0_0001),
-                        vec!(0b_1_1000, 0b_0_0001),
+                        vec!(0b_1_1001, 0b_1_1110),
+                        vec!(0b_1_0101, 0b_0_1001),
+                        vec!(0b_1_0101, 0b_0_0001),
+                        vec!(0b_1_0111, 0b_0_0001),
                     ),                    
                 )),  // TODO implement piece_permuted correctly & fully after tracer round
             },
@@ -380,6 +542,15 @@ mod tests {
         for piecemeal in calendar_pieces() {
             if let Some(piece_rotated) = piecemeal.piece_rotated {
                 assert_eq!(piece_rotated, rotate_piece(&piecemeal.piece));
+            }
+        }
+    }
+
+    #[test]
+    fn encodes_piece() {
+        for piecemeal in calendar_pieces() {
+            if let Some(piece_encoded) = piecemeal.piece_encoded {
+                assert_eq!(piece_encoded, encode_piece(&piecemeal.piece));
             }
         }
     }
