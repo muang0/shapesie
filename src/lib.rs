@@ -1,4 +1,4 @@
-pub struct Error;
+use std::fmt;
 
 // TODO make input generic
 // TODO support non-uniform vector size piece inputs
@@ -7,10 +7,43 @@ pub struct Error;
 // TODO support more than 8 pieces input
 // TODO implement recursion once tracer round complete
 // TODO board/pieces as custom type & implement std::fmt::Binary
+// TODO support puzzles where unfilled spaces in solution is acceptable
+
+pub struct Error;
+
+struct Board(Vec<Vec<u16>>);
+
+impl fmt::Binary for Board {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        println!();
+        for x_arr in self.0.iter() {
+            for piece in x_arr.iter() {
+                print!("{:09b} ", piece);
+            }
+            println!()
+        }
+        Ok(())
+    }
+}
+
+struct Piece(Vec<Vec<u8>>);
+
+impl fmt::Binary for Piece {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        println!();
+        for x_arr in self.0.iter() {
+            for piece in x_arr.iter() {
+                print!("{:05b} ", piece);
+            }
+            println!()
+        }
+        Ok(())
+    }
+}
 
 struct PiecePermuted {
     uid: u8,
-    piece_permuted: Vec<Vec<Vec<u8>>>,
+    piece_permuted: Vec<Piece>,
 }
 
 pub fn solve_puzzle(
@@ -24,22 +57,24 @@ fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<Vec<Vec<Vec<u8>>>>
     Ok(vec![vec![vec![vec![0, 1], vec![1, 0]]]])
 }
 
-fn encode_piece(piece: &Vec<Vec<bool>>) -> Vec<Vec<u8>> {
-    let mut encoded_piece: Vec<Vec<u8>> = piece
-        .iter()
-        .map(|x_arr| {
-            x_arr
-                .iter()
-                .map(|is_piece| {
-                    if *is_piece {
-                        return 0b_1_0000;
-                    } else {
-                        return 0b_0_0000;
-                    }
-                })
-                .collect()
-        })
-        .collect();
+fn encode_piece(piece: &Vec<Vec<bool>>) -> Piece {
+    let mut encoded_piece = Piece(
+        piece
+            .iter()
+            .map(|x_arr| {
+                x_arr
+                    .iter()
+                    .map(|is_piece| {
+                        if *is_piece {
+                            return 0b_1_0000;
+                        } else {
+                            return 0b_0_0000;
+                        }
+                    })
+                    .collect()
+            })
+            .collect(),
+    );
     calculate_neighbors_piece(&mut encoded_piece);
     return encoded_piece;
 }
@@ -60,10 +95,10 @@ fn flip_piece(piece: &Vec<Vec<bool>>) -> Vec<Vec<bool>> {
     return piece.iter().rev().map(|y| y.clone()).collect();
 }
 
-fn calculate_neighbors_board(grid: &mut Vec<Vec<u16>>) {
+fn calculate_neighbors_board(board: &mut Board) {
     // TODO refactor this mess
-    let grid_reference = grid.clone(); // avoid performance penalty by using unsafe rust when updating grid?
-    for (y_index, x_arr) in grid.iter_mut().enumerate() {
+    let board_reference = board.0.clone(); // avoid performance penalty by using unsafe rust when updating board?
+    for (y_index, x_arr) in board.0.iter_mut().enumerate() {
         for (x_index, square) in x_arr.iter_mut().enumerate() {
             // don't need to calculate neighbors for off-board squares
             if *square | 0b_111_0_1_1111 == 0b_111_1_1_1111 {
@@ -72,7 +107,7 @@ fn calculate_neighbors_board(grid: &mut Vec<Vec<u16>>) {
                     *square = *square | 0b_000_0_0_1000;
                 } else {
                     // get north square
-                    if let Some(x_arr2) = grid_reference.get(y_index - 1) {
+                    if let Some(x_arr2) = board_reference.get(y_index - 1) {
                         if let Some(north_square) = x_arr2.get(x_index) {
                             // if the north square is off the board or blocked
                             if *north_square & 0b_1_1_0000 != 0b_1_1_0000 {
@@ -88,7 +123,7 @@ fn calculate_neighbors_board(grid: &mut Vec<Vec<u16>>) {
                     }
                 }
                 // get east square
-                if let Some(x_arr2) = grid_reference.get(y_index) {
+                if let Some(x_arr2) = board_reference.get(y_index) {
                     if let Some(east_square) = x_arr2.get(x_index + 1) {
                         // if the east square is off the board or blocked
                         if *east_square & 0b_1_1_0000 != 0b_1_1_0000 {
@@ -103,7 +138,7 @@ fn calculate_neighbors_board(grid: &mut Vec<Vec<u16>>) {
                     *square = *square | 0b_000_0_0_0100;
                 }
                 // get south square
-                if let Some(x_arr2) = grid_reference.get(y_index + 1) {
+                if let Some(x_arr2) = board_reference.get(y_index + 1) {
                     if let Some(south_square) = x_arr2.get(x_index) {
                         // if the south square is off the board or blocked
                         if *south_square & 0b_1_1_0000 != 0b_1_1_0000 {
@@ -122,7 +157,7 @@ fn calculate_neighbors_board(grid: &mut Vec<Vec<u16>>) {
                     *square = *square | 0b_000_0_0_0001;
                 } else {
                     // get west square
-                    if let Some(x_arr2) = grid_reference.get(y_index) {
+                    if let Some(x_arr2) = board_reference.get(y_index) {
                         if let Some(west_square) = x_arr2.get(x_index - 1) {
                             // if the west square is off the board or blocked
                             if *west_square & 0b_1_1_0000 != 0b_1_1_0000 {
@@ -142,10 +177,10 @@ fn calculate_neighbors_board(grid: &mut Vec<Vec<u16>>) {
     }
 }
 
-fn calculate_neighbors_piece(grid: &mut Vec<Vec<u8>>) {
+fn calculate_neighbors_piece(piece: &mut Piece) {
     // TODO refactor this mess
-    let grid_reference = grid.clone(); // avoid performance penalty by using unsafe rust when updating grid?
-    for (y_index, x_arr) in grid.iter_mut().enumerate() {
+    let piece_reference = piece.0.clone(); // avoid performance penalty by using unsafe rust when updating piece?
+    for (y_index, x_arr) in piece.0.iter_mut().enumerate() {
         for (x_index, square) in x_arr.iter_mut().enumerate() {
             // if square is part of a piece
             if *square & 0b_1_0000 == 0b_1_0000 {
@@ -154,7 +189,7 @@ fn calculate_neighbors_piece(grid: &mut Vec<Vec<u8>>) {
                     *square = *square | 0b_1000;
                 } else {
                     // get north square
-                    if let Some(x_arr2) = grid_reference.get(y_index - 1) {
+                    if let Some(x_arr2) = piece_reference.get(y_index - 1) {
                         if let Some(north_square) = x_arr2.get(x_index) {
                             // if the north square is a piece
                             if *north_square & 0b_1_0000 == 0b_1_0000 {
@@ -170,7 +205,7 @@ fn calculate_neighbors_piece(grid: &mut Vec<Vec<u8>>) {
                     }
                 }
                 // get east square
-                if let Some(x_arr2) = grid_reference.get(y_index) {
+                if let Some(x_arr2) = piece_reference.get(y_index) {
                     if let Some(east_square) = x_arr2.get(x_index + 1) {
                         // if the east square is a piece
                         if *east_square & 0b_1_0000 == 0b_1_0000 {
@@ -185,7 +220,7 @@ fn calculate_neighbors_piece(grid: &mut Vec<Vec<u8>>) {
                     *square = *square | 0b_0100;
                 }
                 // get south square
-                if let Some(x_arr2) = grid_reference.get(y_index + 1) {
+                if let Some(x_arr2) = piece_reference.get(y_index + 1) {
                     if let Some(south_square) = x_arr2.get(x_index) {
                         // if the south square is a piece
                         if *south_square & 0b_1_0000 == 0b_1_0000 {
@@ -204,7 +239,7 @@ fn calculate_neighbors_piece(grid: &mut Vec<Vec<u8>>) {
                     *square = *square | 0b_0001;
                 } else {
                     // get west square
-                    if let Some(x_arr2) = grid_reference.get(y_index) {
+                    if let Some(x_arr2) = piece_reference.get(y_index) {
                         if let Some(west_square) = x_arr2.get(x_index - 1) {
                             // if the west square is a piece
                             if *west_square & 0b_1_0000 == 0b_1_0000 {
@@ -226,7 +261,7 @@ fn calculate_neighbors_piece(grid: &mut Vec<Vec<u8>>) {
                     *square = *square & 0b_0111;
                 } else {
                     // get north square
-                    if let Some(x_arr2) = grid_reference.get(y_index - 1) {
+                    if let Some(x_arr2) = piece_reference.get(y_index - 1) {
                         if let Some(north_square) = x_arr2.get(x_index) {
                             // if the north square is a piece
                             if *north_square & 0b_1_0000 == 0b_1_0000 {
@@ -242,7 +277,7 @@ fn calculate_neighbors_piece(grid: &mut Vec<Vec<u8>>) {
                     }
                 }
                 // get east square
-                if let Some(x_arr2) = grid_reference.get(y_index) {
+                if let Some(x_arr2) = piece_reference.get(y_index) {
                     if let Some(east_square) = x_arr2.get(x_index + 1) {
                         // if the east square is a piece
                         if *east_square & 0b_1_0000 == 0b_1_0000 {
@@ -257,7 +292,7 @@ fn calculate_neighbors_piece(grid: &mut Vec<Vec<u8>>) {
                     *square = *square & 0b_1011;
                 }
                 // get south square
-                if let Some(x_arr2) = grid_reference.get(y_index + 1) {
+                if let Some(x_arr2) = piece_reference.get(y_index + 1) {
                     if let Some(south_square) = x_arr2.get(x_index) {
                         // if the south square is a piece
                         if *south_square & 0b_1_0000 == 0b_1_0000 {
@@ -276,7 +311,7 @@ fn calculate_neighbors_piece(grid: &mut Vec<Vec<u8>>) {
                     *square = *square & 0b_1110;
                 } else {
                     // get west square
-                    if let Some(x_arr2) = grid_reference.get(y_index) {
+                    if let Some(x_arr2) = piece_reference.get(y_index) {
                         if let Some(west_square) = x_arr2.get(x_index - 1) {
                             // if the west square is a piece
                             if *west_square & 0b_1_0000 == 0b_1_0000 {
@@ -296,14 +331,11 @@ fn calculate_neighbors_piece(grid: &mut Vec<Vec<u8>>) {
     }
 }
 
-fn attempt_move(
-    board: Vec<Vec<u16>>,
-    pieces_permuted: Vec<PiecePermuted>,
-) -> Result<Vec<Vec<u16>>, Error> {
+fn attempt_move(board: Board, pieces_permuted: Vec<PiecePermuted>) -> Result<Board, Error> {
     // find first 'most restricted' space
     // board encoding scheme: {3b': piece_used, 1b': is_board, 1'b: is_open, 4b': neighbors}
     // 1st 3-walled space
-    let mut target_space = board.iter().enumerate().find_map(|(y_index, x_vec)| {
+    let mut target_space = board.0.iter().enumerate().find_map(|(y_index, x_vec)| {
         x_vec.iter().enumerate().find_map(|(x_index, space)| {
             if space & 0b_1_1_0111 == 0b_1_1_0111
                 || space & 0b1_1_1011 == 0b_1_1_1011
@@ -319,7 +351,7 @@ fn attempt_move(
 
     // if no 3-walled space found, search for fist corner
     if target_space == None {
-        target_space = board.iter().enumerate().find_map(|(y_index, x_vec)| {
+        target_space = board.0.iter().enumerate().find_map(|(y_index, x_vec)| {
             x_vec.iter().enumerate().find_map(|(x_index, space)| {
                 if space & 0b_1_1_0011 == 0b_1_1_0011
                     || space & 0b_1_1_1001 == 0b_1_1_1001
@@ -338,20 +370,20 @@ fn attempt_move(
     if let Some((y_index_board, x_index_board)) = target_space {
         for piece_permuted in pieces_permuted.iter() {
             for piece in piece_permuted.piece_permuted.iter() {
-                for (y_index_piece_anchor, x_arr) in piece.iter().enumerate() {
+                for (y_index_piece_anchor, x_arr) in piece.0.iter().enumerate() {
                     for (x_index_piece_anchor, piece_space_anchor) in x_arr.iter().enumerate() {
                         // piece anchor should fit onto the board's target space without any neighbor/wall conflicts
                         if piece_space_anchor & 0b_1_0000 == 0b_1_0000
                             && u16::from(*piece_space_anchor)
-                                & (board[y_index_board][x_index_board] & 0b_1111)
-                                == (board[y_index_board][x_index_board] & 0b_1111)
+                                & (board.0[y_index_board][x_index_board] & 0b_1111)
+                                == (board.0[y_index_board][x_index_board] & 0b_1111)
                         {
                             // determine if piece is a valid move (given fixed board target space & piece anchor)
-                            let piece_is_blocked = piece.iter().enumerate().any(|(y_index_piece, x_arr2)| x_arr2.iter().enumerate().any(|(x_index_piece, piece_space)|
+                            let piece_is_blocked = piece.0.iter().enumerate().any(|(y_index_piece, x_arr2)| x_arr2.iter().enumerate().any(|(x_index_piece, piece_space)|
                                 // check if piece vector item corresponds to a piece square
                                 if piece_space & 0b_1_0000 == 0b_1_0000 {
                                     // check if associated board square is open
-                                    if let Some(x_arr2) = board.get(y_index_board - y_index_piece_anchor + y_index_piece) {
+                                    if let Some(x_arr2) = board.0.get(y_index_board - y_index_piece_anchor + y_index_piece) {
                                         if let Some(piece) = x_arr2.get(x_index_board - x_index_piece_anchor + x_index_piece) {
                                             if piece & 0b_1_1_0000 != 0b_1_1_0000 {
                                                 return true
@@ -361,12 +393,12 @@ fn attempt_move(
                                 } else { return false }
                             ));
                             if !piece_is_blocked {
-                                let mut updated_board = board.clone();
+                                let mut updated_board = Board(board.0.clone());
                                 // update board to reflect piece placement
-                                for (y_index_piece, x_arr2) in piece.iter().enumerate() {
+                                for (y_index_piece, x_arr2) in piece.0.iter().enumerate() {
                                     for (x_index_piece, piece_space) in x_arr2.iter().enumerate() {
                                         if piece_space & 0b_1_0000 == 0b_1_0000 {
-                                            if let Some(x_arr3) = updated_board.get_mut(
+                                            if let Some(x_arr3) = updated_board.0.get_mut(
                                                 y_index_board - y_index_piece_anchor
                                                     + y_index_piece,
                                             ) {
@@ -440,16 +472,16 @@ mod tests {
                 piece_permuted: Some(
                     PiecePermuted {
                         piece_permuted: vec!(
-                            vec!(
+                            Piece(vec!(
                                 vec!(0b_1_1011, 0b_1_1010, 0b_1_1010, 0b_1_1100),
                                 vec!(0b_0_1000, 0b_0_1000, 0b_0_1100, 0b_1_0111),
-                            ),
-                            vec!(
+                            )),
+                            Piece(vec!(
                                 vec!(0b_1_1001, 0b_1_1110),
                                 vec!(0b_1_0101, 0b_0_1001),
                                 vec!(0b_1_0101, 0b_0_0001),
                                 vec!(0b_1_0111, 0b_0_0001),
-                            ),
+                            )),
                         ),
                         uid: 1
                     },
@@ -561,7 +593,7 @@ mod tests {
     fn encodes_piece() {
         for piecemeal in calendar_pieces() {
             if let Some(piece_encoded) = piecemeal.piece_encoded {
-                assert_eq!(piece_encoded, encode_piece(&piecemeal.piece));
+                assert_eq!(piece_encoded, encode_piece(&piecemeal.piece).0);
             }
         }
     }
@@ -583,22 +615,22 @@ mod tests {
             .collect();
 
         // board encoding scheme: {3b': piece_used, 1b': is_board, 1'b: is_open, 4b': neighbors}
-        let board: Vec<Vec<u16>> = vec![
+        let board = Board(vec![
             vec![0b_000_1_1_1001, 0b_000_1_1_1000, 0b_000_1_1_1110],
             vec![0b_000_1_1_0001, 0b_000_1_1_0100, 0b_000_0_1_0000],
             vec![0b_000_1_1_0001, 0b_000_1_1_0100, 0b_000_0_1_0000],
             vec![0b_000_1_1_0011, 0b_000_1_1_0110, 0b_000_0_1_0000],
-        ];
-        let expected_board: Vec<Vec<u16>> = vec![
+        ]);
+        let expected_board = Board(vec![
             vec![0b_000_1_1_1101, 0b_001_1_0_1110, 0b_001_1_0_1111],
             vec![0b_000_1_1_0101, 0b_001_1_0_1110, 0b_000_0_1_0000],
             vec![0b_000_1_1_0101, 0b_001_1_0_1110, 0b_000_0_1_0000],
             vec![0b_000_1_1_0111, 0b_001_1_0_1110, 0b_000_0_1_0000],
-        ];
+        ]);
 
         // attempt piece placement
         if let Ok(board) = attempt_move(board, pieces_permuted) {
-            assert_eq!(expected_board, board);
+            assert_eq!(expected_board.0, board.0);
         } else {
             panic!("failed to attempt move")
         }
