@@ -9,6 +9,7 @@ use std::fmt;
 // TODO board/pieces as custom type & implement std::fmt::Binary
 // TODO support puzzles where unfilled spaces in solution is acceptable
 
+#[derive(Debug)]
 pub struct Error;
 
 struct Board(Vec<Vec<u16>>);
@@ -26,6 +27,7 @@ impl fmt::Binary for Board {
     }
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Piece(Vec<Vec<u8>>);
 
 impl fmt::Binary for Piece {
@@ -41,6 +43,7 @@ impl fmt::Binary for Piece {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 struct PiecePermuted {
     uid: u8,
     piece_permuted: Vec<Piece>,
@@ -53,8 +56,42 @@ pub fn solve_puzzle(
     Ok(vec![vec![0, 1], vec![1, 0]])
 }
 
-fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<Vec<Vec<Vec<u8>>>>, Error> {
-    Ok(vec![vec![vec![vec![0, 1], vec![1, 0]]]])
+fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<PiecePermuted>, Error> {
+    let mut pieces_permuted: Vec<PiecePermuted> = Vec::new();
+    // loop through pieces
+    for (index, piece) in pieces.iter().enumerate() {
+        // rotate & encode piece 4x
+        let mut piece_permuted = PiecePermuted {
+            uid: u8::try_from(index).unwrap(),
+            piece_permuted: Vec::new(),
+        }; // TODO safely handle try_from Result
+        let mut rotated_piece = piece.clone();
+        piece_permuted
+            .piece_permuted
+            .push(encode_piece(&rotated_piece));
+        for _ in 0..3 {
+            rotated_piece = rotate_piece(&rotated_piece);
+            piece_permuted
+                .piece_permuted
+                .push(encode_piece(&rotated_piece))
+        }
+        // flip piece, then rotate & encode 4x
+        let mut flipped_rotated_piece = flip_piece(&piece.clone());
+        piece_permuted
+            .piece_permuted
+            .push(encode_piece(&flipped_rotated_piece));
+        for _ in 0..3 {
+            flipped_rotated_piece = rotate_piece(&flipped_rotated_piece);
+            piece_permuted
+                .piece_permuted
+                .push(encode_piece(&flipped_rotated_piece))
+        }
+        // remove duplicate piece permutations
+        piece_permuted.piece_permuted.sort();
+        piece_permuted.piece_permuted.dedup();
+        pieces_permuted.push(piece_permuted)
+    }
+    return Ok(pieces_permuted);
 }
 
 fn encode_piece(piece: &Vec<Vec<bool>>) -> Piece {
@@ -383,13 +420,19 @@ fn attempt_move(board: Board, pieces_permuted: Vec<PiecePermuted>) -> Result<Boa
                                 // check if piece vector item corresponds to a piece square
                                 if piece_space & 0b_1_0000 == 0b_1_0000 {
                                     // check if associated board square is open
-                                    if let Some(x_arr2) = board.0.get(y_index_board - y_index_piece_anchor + y_index_piece) {
-                                        if let Some(piece) = x_arr2.get(x_index_board - x_index_piece_anchor + x_index_piece) {
-                                            if piece & 0b_1_1_0000 != 0b_1_1_0000 {
-                                                return true
-                                            }
-                                        }
-                                    } return false
+                                    let target_y_index_opt = (y_index_board + y_index_piece).checked_sub(y_index_piece_anchor);
+                                    if let Some(target_y_index) = target_y_index_opt {
+                                        if let Some(x_arr2) = board.0.get(target_y_index) {
+                                            let target_x_index_opt = (x_index_board + x_index_piece).checked_sub(x_index_piece_anchor);
+                                            if let Some(target_x_index) = target_x_index_opt {
+                                                if let Some(piece) = x_arr2.get(target_x_index) {
+                                                    if piece & 0b_1_1_0000 != 0b_1_1_0000 {
+                                                        return true
+                                                    } else { return false }
+                                                } else { return true }
+                                            } else { return true }
+                                        } else { return true }
+                                    } else { return true }
                                 } else { return false }
                             ));
                             if !piece_is_blocked {
@@ -398,13 +441,14 @@ fn attempt_move(board: Board, pieces_permuted: Vec<PiecePermuted>) -> Result<Boa
                                 for (y_index_piece, x_arr2) in piece.0.iter().enumerate() {
                                     for (x_index_piece, piece_space) in x_arr2.iter().enumerate() {
                                         if piece_space & 0b_1_0000 == 0b_1_0000 {
+                                            // don't have to worry about subraction overflow here since checked above
                                             if let Some(x_arr3) = updated_board.0.get_mut(
-                                                y_index_board - y_index_piece_anchor
-                                                    + y_index_piece,
+                                                y_index_board + y_index_piece
+                                                    - y_index_piece_anchor,
                                             ) {
                                                 if let Some(piece) = x_arr3.get_mut(
-                                                    x_index_board - x_index_piece_anchor
-                                                        + x_index_piece,
+                                                    x_index_board + x_index_piece
+                                                        - x_index_piece_anchor,
                                                 ) {
                                                     *piece = 0b_1_0_0000
                                                         | u16::from(piece_permuted.uid) << 6
@@ -471,10 +515,21 @@ mod tests {
                 )),
                 piece_permuted: Some(
                     PiecePermuted {
+                        uid: 1,
                         piece_permuted: vec!(
                             Piece(vec!(
-                                vec!(0b_1_1011, 0b_1_1010, 0b_1_1010, 0b_1_1100),
-                                vec!(0b_0_1000, 0b_0_1000, 0b_0_1100, 0b_1_0111),
+                                vec!(0b_0_0010, 0b_0_0010, 0b_0_0110, 0b_1_1101),
+                                vec!(0b_1_1011, 0b_1_1010, 0b_1_1010, 0b_1_0110),
+                            )),
+                            Piece(vec!(
+                                vec!(0b_00100, 0b_11101),
+                                vec!(0b_00100, 0b_10101),
+                                vec!(0b_00110, 0b_10101),
+                                vec!(0b_11011, 0b_10110),
+                            )),
+                            Piece(vec!(
+                                vec!(0b_11001, 0b_11010, 0b_11010, 0b_11110),
+                                vec!(0b_10111, 0b_01001, 0b_01000, 0b_01000),
                             )),
                             Piece(vec!(
                                 vec!(0b_1_1001, 0b_1_1110),
@@ -482,10 +537,29 @@ mod tests {
                                 vec!(0b_1_0101, 0b_0_0001),
                                 vec!(0b_1_0111, 0b_0_0001),
                             )),
+                            Piece(vec!(
+                                vec!(0b_1_1011, 0b_1_1010, 0b_1_1010, 0b_1_1100),
+                                vec!(0b_0_1000, 0b_0_1000, 0b_0_1100, 0b_1_0111),
+                            )),
+                            Piece(vec!(
+                                vec!(0b_11011, 0b_11100),
+                                vec!(0b_01100, 0b_10101),
+                                vec!(0b_00100, 0b_10101),
+                                vec!(0b_00100, 0b_10111),
+                            )),
+                            Piece(vec!(
+                                vec!(0b_11101, 0b_00001),
+                                vec!(0b_10101, 0b_00001),
+                                vec!(0b_10101, 0b_00011),
+                                vec!(0b_10011, 0b_11110),
+                            )),
+                            Piece(vec!(
+                                vec!(0b_11101, 0b_00011, 0b_00010, 0b_00010),
+                                vec!(0b_10011, 0b_11010, 0b_11010, 0b_11110),
+                            )),
                         ),
-                        uid: 1
                     },
-                ),  // TODO implement piece_permuted correctly & fully after tracer round
+                ),
             },
             Piecemeal {
                 piece: vec!(
@@ -514,7 +588,31 @@ mod tests {
                     vec!(1, 1),
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect()),
                 piece_encoded: None,
-                piece_permuted: None
+                piece_permuted: Some(
+                    PiecePermuted { 
+                        uid: (2),
+                        piece_permuted: (vec!(
+                            Piece(vec!(
+                                vec!(0b_1_1001, 0b_1_1010, 0b_1_1100),
+                                vec!(0b_1_0111, 0b_0_1101, 0b_1_0111),
+                            )),
+                            Piece(vec!(
+                                vec!(0b_1_1001, 0b_1_1110),
+                                vec!(0b_1_0101, 0b_0_1011),
+                                vec!(0b_1_0011, 0b_1_1110)
+                            )),
+                            Piece(vec!(
+                                vec!(0b_1_1011, 0b_1_1100),
+                                vec!(0b_0_1110, 0b_1_0101),
+                                vec!(0b_1_1011, 0b_1_0110)
+                            )),
+                            Piece(vec!(
+                                vec!(0b_1_1101, 0b_0_0111, 0b_1_1101),
+                                vec!(0b_1_0011, 0b_1_1010, 0b_1_0110),
+                            )),
+                        ))
+                    }
+                )
             },
             Piecemeal {
                 piece: vec!(
@@ -595,6 +693,39 @@ mod tests {
             if let Some(piece_encoded) = piecemeal.piece_encoded {
                 assert_eq!(piece_encoded, encode_piece(&piecemeal.piece).0);
             }
+        }
+    }
+
+    #[test]
+    fn permutes_pieces() {
+        // collect pieces from calendar_pieces where piece_permuted is defined
+        let pieces: Vec<Vec<Vec<bool>>> = calendar_pieces()
+            .iter()
+            .filter(|piecemeal| piecemeal.piece_permuted.is_some())
+            .map(|piecemeal| piecemeal.piece.clone())
+            .collect();
+
+        // permute pieces
+        let pieces_permuted = permute_pieces(&pieces).unwrap(); // TODO safely handle this unwrap
+
+        // collect pieces_permuted from calendar_pieces
+        let mut expected_pieces_permuted: Vec<PiecePermuted> = calendar_pieces()
+            .iter()
+            .filter(|piecemeal| piecemeal.piece_permuted.is_some())
+            .map(|piecemeal| piecemeal.piece_permuted.clone().unwrap())
+            .collect();
+
+        // populate uid for permuted pieces
+        for (index, piece) in expected_pieces_permuted.iter_mut().enumerate() {
+            piece.uid = u8::try_from(index).unwrap();
+        }
+
+        // validate
+        for (index, piece_permuted) in pieces_permuted.iter().enumerate() {
+            assert_eq!(
+                *expected_pieces_permuted.get(index).unwrap(),
+                *piece_permuted
+            );
         }
     }
 
