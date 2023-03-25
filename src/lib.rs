@@ -8,6 +8,11 @@ pub struct Error;
 // TODO implement recursion once tracer round complete
 // TODO board/pieces as custom type & implement std::fmt::Binary
 
+struct PiecePermuted {
+    uid: u8,
+    piece_permuted: Vec<Vec<Vec<u8>>>,
+}
+
 pub fn solve_puzzle(
     board: &Vec<Vec<bool>>,
     pieces: &Vec<Vec<Vec<bool>>>,
@@ -293,7 +298,7 @@ fn calculate_neighbors_piece(grid: &mut Vec<Vec<u8>>) {
 
 fn attempt_move(
     board: Vec<Vec<u16>>,
-    pieces_permuted: Vec<Vec<Vec<Vec<u8>>>>,
+    pieces_permuted: Vec<PiecePermuted>,
 ) -> Result<Vec<Vec<u16>>, Error> {
     // find first 'most restricted' space
     // board encoding scheme: {3b': piece_used, 1b': is_board, 1'b: is_open, 4b': neighbors}
@@ -331,8 +336,8 @@ fn attempt_move(
 
     // do any of the pieces fit over the target space
     if let Some((y_index_board, x_index_board)) = target_space {
-        for piece_permutations in pieces_permuted.iter() {
-            for piece in piece_permutations.iter() {
+        for piece_permuted in pieces_permuted.iter() {
+            for piece in piece_permuted.piece_permuted.iter() {
                 for (y_index_piece_anchor, x_arr) in piece.iter().enumerate() {
                     for (x_index_piece_anchor, piece_space_anchor) in x_arr.iter().enumerate() {
                         // piece anchor should fit onto the board's target space without any neighbor/wall conflicts
@@ -369,7 +374,8 @@ fn attempt_move(
                                                     x_index_board - x_index_piece_anchor
                                                         + x_index_piece,
                                                 ) {
-                                                    *piece = 0b_001_1_0_0000 // TODO how to set piece UID? Bubble up to library api?
+                                                    *piece = 0b_1_0_0000
+                                                        | u16::from(piece_permuted.uid) << 6
                                                 } else {
                                                     return Err(Error);
                                                 }
@@ -402,7 +408,7 @@ mod tests {
         piece_flipped: Option<Vec<Vec<bool>>>,
         piece_rotated: Option<Vec<Vec<bool>>>,
         piece_encoded: Option<Vec<Vec<u8>>>,
-        piece_permuted: Option<Vec<Vec<Vec<u8>>>>,
+        piece_permuted: Option<PiecePermuted>,
     }
 
     #[rustfmt::skip]
@@ -431,18 +437,23 @@ mod tests {
                     vec!(0b_1_0101, 0b_0_0001),
                     vec!(0b_1_0111, 0b_0_0001),
                 )),
-                piece_permuted: Some(vec!(
-                    vec!(
-                        vec!(0b_1_1011, 0b_1_1010, 0b_1_1010, 0b_1_1100),
-                        vec!(0b_0_1000, 0b_0_1000, 0b_0_1100, 0b_1_0111),
-                    ),
-                    vec!(
-                        vec!(0b_1_1001, 0b_1_1110),
-                        vec!(0b_1_0101, 0b_0_1001),
-                        vec!(0b_1_0101, 0b_0_0001),
-                        vec!(0b_1_0111, 0b_0_0001),
-                    ),                    
-                )),  // TODO implement piece_permuted correctly & fully after tracer round
+                piece_permuted: Some(
+                    PiecePermuted {
+                        piece_permuted: vec!(
+                            vec!(
+                                vec!(0b_1_1011, 0b_1_1010, 0b_1_1010, 0b_1_1100),
+                                vec!(0b_0_1000, 0b_0_1000, 0b_0_1100, 0b_1_0111),
+                            ),
+                            vec!(
+                                vec!(0b_1_1001, 0b_1_1110),
+                                vec!(0b_1_0101, 0b_0_1001),
+                                vec!(0b_1_0101, 0b_0_0001),
+                                vec!(0b_1_0111, 0b_0_0001),
+                            ),
+                        ),
+                        uid: 1
+                    },
+                ),  // TODO implement piece_permuted correctly & fully after tracer round
             },
             Piecemeal {
                 piece: vec!(
