@@ -4,7 +4,6 @@ use std::fmt;
 //  ((1, 1, 0),
 //   (1))
 // TODO support more than 8 pieces input
-// TODO implement recursion once tracer round complete
 // TODO implement board/piece public interface
 // TODO support puzzles where unfilled spaces in solution is acceptable
 
@@ -81,10 +80,14 @@ struct PiecePermuted {
     piece_permuted: Vec<Piece>,
 }
 
-fn solve_puzzle(board: &Vec<Vec<bool>>, pieces: &Vec<Vec<Vec<bool>>>) -> Result<Board, Error> {
+fn solve_puzzle(
+    board: &Vec<Vec<bool>>,
+    pieces: &Vec<Vec<Vec<bool>>>,
+    should_recurse: bool,
+) -> Result<Board, Error> {
     let pieces_permuted = permute_pieces(pieces).expect("Failed to permute pieces");
     let board = Board::new(board);
-    return attempt_move(board, pieces_permuted);
+    return attempt_move(board, pieces_permuted, should_recurse);
 }
 
 fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<PiecePermuted>, Error> {
@@ -399,7 +402,11 @@ fn calculate_neighbors_piece(piece: &mut Piece) {
     }
 }
 
-fn attempt_move(board: Board, pieces_permuted: Vec<PiecePermuted>) -> Result<Board, Error> {
+fn attempt_move(
+    board: Board,
+    pieces_permuted: Vec<PiecePermuted>,
+    should_recurse: bool,
+) -> Result<Board, Error> {
     // find first 'most restricted' space
     // board encoding scheme: {3b': piece_used, 1b': is_board, 1'b: is_open, 4b': neighbors}
     // 1st 3-walled space
@@ -436,7 +443,7 @@ fn attempt_move(board: Board, pieces_permuted: Vec<PiecePermuted>) -> Result<Boa
 
     // do any of the pieces fit over the target space
     if let Some((y_index_board, x_index_board)) = target_space {
-        for piece_permuted in pieces_permuted.iter() {
+        for (piece_index, piece_permuted) in pieces_permuted.iter().enumerate() {
             for piece in piece_permuted.piece_permuted.iter() {
                 for (y_index_piece_anchor, x_arr) in piece.0.iter().enumerate() {
                     for (x_index_piece_anchor, piece_space_anchor) in x_arr.iter().enumerate() {
@@ -484,16 +491,26 @@ fn attempt_move(board: Board, pieces_permuted: Vec<PiecePermuted>) -> Result<Boa
                                                     *piece = 0b_1_0_0000
                                                         | u16::from(piece_permuted.uid) << 6
                                                 } else {
-                                                    return Err(Error);
+                                                    return Err(Error); // error getting x index of piece during placement
                                                 }
                                             } else {
-                                                return Err(Error);
+                                                return Err(Error); // error getting y index of piece during placement
                                             }
                                         }
                                     }
                                 }
                                 calculate_neighbors_board(&mut updated_board);
-                                return Ok(updated_board);
+                                let mut updated_pieces = pieces_permuted.clone();
+                                updated_pieces.remove(piece_index);
+                                // return updated board if all pieces have been used
+                                if updated_pieces.len() == 0 || !should_recurse {
+                                    return Ok(updated_board);
+                                }
+                                let move_res = attempt_move(updated_board, updated_pieces, true);
+                                // return result if puzzle has been solved
+                                if move_res.is_ok() {
+                                    return move_res;
+                                }
                             }
                         }
                     }
@@ -501,9 +518,9 @@ fn attempt_move(board: Board, pieces_permuted: Vec<PiecePermuted>) -> Result<Boa
             }
         }
     } else {
-        return Err(Error); // TODO
+        return Err(Error); // No target space on the board was found
     }
-    return Err(Error); // TODO
+    return Err(Error); // No solution found
 }
 
 #[cfg(test)]
@@ -791,12 +808,12 @@ mod tests {
         ]);
 
         // attempt piece placement
-        let board = attempt_move(board, pieces_permuted).expect("Failed to attempt move");
+        let board = attempt_move(board, pieces_permuted, false).expect("Failed to attempt move");
         assert_eq!(expected_board.0, board.0);
     }
 
     #[test]
-    fn solves_puzzle() {
+    fn solves_puzzle_tracer() {
         // test the following placement, where:
         //  o = open space, c = closed space, x = placed piece
         // o o o        x x x
@@ -820,7 +837,7 @@ mod tests {
         ]);
 
         // attempt puzzle solution
-        let board = solve_puzzle(&board, &pieces).expect("Failed to solve puzzle");
+        let board = solve_puzzle(&board, &pieces, false).expect("Failed to solve puzzle");
         assert_eq!(expected_board.0, board.0);
 
         // test the following placement, where:
@@ -849,7 +866,7 @@ mod tests {
         ]);
 
         // attempt puzzle solution
-        let board = solve_puzzle(&board, &pieces).expect("Failed to solve puzzle");
+        let board = solve_puzzle(&board, &pieces, false).expect("Failed to solve puzzle");
         assert_eq!(expected_board.0, board.0);
 
         // test a non-solvable board:
@@ -859,7 +876,41 @@ mod tests {
             .collect();
 
         // attempt puzzle solution
-        let board = solve_puzzle(&board, &pieces);
+        let board = solve_puzzle(&board, &pieces, false);
         assert_eq!(board.is_err(), true);
+    }
+
+    #[test]#[rustfmt::skip]
+    fn solves_puzzle() {
+        // march 26 calendar board
+        let board: Vec<Vec<bool>> = vec!(
+            vec!(1, 1, 0, 1, 1, 1, 0),
+            vec!(1, 1, 1, 1, 1, 1, 0),
+            vec!(1, 1, 1, 1, 1, 1, 1),
+            vec!(1, 1, 1, 1, 1, 1, 1),
+            vec!(1, 1, 1, 1, 1, 1, 1),
+            vec!(1, 1, 1, 1, 0, 1, 1),
+            vec!(1, 1, 1, 0, 0, 0, 0)
+        ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect();
+        
+        let expected_board = Board(vec!(
+            vec!(0b_000_1_0_1111, 0b_000_1_0_1111, 0b_000_0_0_0000, 0b_001_1_0_1111, 0b_011_1_0_1111, 0b_011_1_0_1111, 0b_000_0_0_0000),
+            vec!(0b_000_1_0_1111, 0b_001_1_0_1111, 0b_001_1_0_1111, 0b_001_1_0_1111, 0b_001_1_0_1111, 0b_011_1_0_1111, 0b_000_0_0_0000),
+            vec!(0b_000_1_0_1111, 0b_010_1_0_1111, 0b_010_1_0_1111, 0b_010_1_0_1111, 0b_110_1_0_1111, 0b_011_1_0_1111, 0b_011_1_0_1111),
+            vec!(0b_000_1_0_1111, 0b_010_1_0_1111, 0b_111_1_0_1111, 0b_010_1_0_1111, 0b_110_1_0_1111, 0b_100_1_0_1111, 0b_100_1_0_1111),
+            vec!(0b_101_1_0_1111, 0b_111_1_0_1111, 0b_111_1_0_1111, 0b_110_1_0_1111, 0b_110_1_0_1111, 0b_100_1_0_1111, 0b_100_1_0_1111),
+            vec!(0b_101_1_0_1111, 0b_111_1_0_1111, 0b_111_1_0_1111, 0b_110_1_0_1111, 0b_000_0_0_0000, 0b_100_1_0_1111, 0b_100_1_0_1111),
+            vec!(0b_101_1_0_1111, 0b_101_1_0_1111, 0b_101_1_0_1111, 0b_000_0_0_0000, 0b_000_0_0_0000, 0b_000_0_0_0000, 0b_000_0_0_0000),
+        ));
+
+        // collect calendar pieces
+        let pieces: Vec<Vec<Vec<bool>>> = calendar_pieces()
+            .iter()
+            .map(|piecemeal| piecemeal.piece.clone())
+            .collect();
+
+        // solve puzzle
+        let res = solve_puzzle(&board, &pieces, true).expect("Failed to solve puzzle");
+        assert_eq!(expected_board.0, res.0);
     }
 }
