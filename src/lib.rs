@@ -19,7 +19,14 @@ impl fmt::Binary for Board {
         println!();
         for x_arr in self.0.iter() {
             for piece in x_arr.iter() {
-                print!("{:09b} ", piece);
+                let uid = piece >> 6 & 0b_111;
+                let is_board = piece >> 5 & 0b_1;
+                let is_open = piece >> 4 & 0b_1;
+                let neighbors = piece & 0b_1111;
+                print!(
+                    "0b_{:03b}_{:01b}_{:01b}_{:04b} ",
+                    uid, is_board, is_open, neighbors
+                );
             }
             println!()
         }
@@ -35,7 +42,9 @@ impl fmt::Binary for Piece {
         println!();
         for x_arr in self.0.iter() {
             for piece in x_arr.iter() {
-                print!("{:05b} ", piece);
+                let is_piece = piece >> 4 & 0b_1;
+                let neighbors = piece & 0b_1111;
+                print!("0b_{:01b}_{:04b} ", is_piece, neighbors);
             }
             println!()
         }
@@ -739,7 +748,7 @@ mod tests {
         // o c c        o x c
 
         // collect permuted pieces
-        let pieces_permuted = calendar_pieces()
+        let pieces_permuted: Vec<PiecePermuted> = calendar_pieces()
             .into_iter()
             .filter(|p| p.piece_permuted.is_some())
             .map(|p| p.piece_permuted.unwrap())
