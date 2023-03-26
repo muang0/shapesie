@@ -4,14 +4,21 @@ use std::fmt;
 //  ((1, 1, 0),
 //   (1))
 // TODO support more than 8 pieces input
+// TODO refactor neighbor calc fn (DRY)
+// TODO refactor how target space on board is found (DRY)
 // TODO implement board/piece public interface
 // TODO support puzzles where unfilled spaces in solution is acceptable
 
 #[derive(Debug)]
-pub struct Error;
+pub enum Error{
+    NoBoardTargetSpaceFound,
+    NoSolutionFound,
+    PiecePlacementBounds
+}
 
 struct Board(Vec<Vec<u16>>);
 
+// board serialization: {3b': uid, 1b': is_board, 1'b: is_open, 4b': neighbors}
 impl fmt::Binary for Board {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         println!();
@@ -59,6 +66,7 @@ impl Board {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Piece(Vec<Vec<u8>>);
 
+// piece serialization : {1b': is_piece, 4b': neighbors}
 impl fmt::Binary for Piece {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         println!();
@@ -76,8 +84,8 @@ impl fmt::Binary for Piece {
 
 #[derive(Clone, Debug, PartialEq)]
 struct PiecePermuted {
-    uid: u8,
-    piece_permuted: Vec<Piece>,
+    uid: u8,                    // used for identifying the piece once placed on the board
+    piece_permuted: Vec<Piece>, // all possible unique orientations of the piece
 }
 
 fn solve_puzzle(
@@ -90,15 +98,16 @@ fn solve_puzzle(
     return attempt_move(board, pieces_permuted, should_recurse);
 }
 
+// find all possible orientations of the provided pieces
 fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<PiecePermuted>, Error> {
     let mut pieces_permuted: Vec<PiecePermuted> = Vec::new();
     // loop through pieces
     for (index, piece) in pieces.iter().enumerate() {
         // rotate & encode piece 4x
         let mut piece_permuted = PiecePermuted {
-            uid: u8::try_from(index).unwrap(),
+            uid: u8::try_from(index).expect("More than 256 pieces"),
             piece_permuted: Vec::new(),
-        }; // TODO safely handle try_from Result
+        };
         let mut rotated_piece = piece.clone();
         piece_permuted
             .piece_permuted
@@ -128,6 +137,7 @@ fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<PiecePermuted>, Er
     return Ok(pieces_permuted);
 }
 
+// piece serialization : {1b': is_piece, 4b': neighbors}
 fn encode_piece(piece: &Vec<Vec<bool>>) -> Piece {
     let mut encoded_piece = Piece(
         piece
@@ -166,6 +176,9 @@ fn flip_piece(piece: &Vec<Vec<bool>>) -> Vec<Vec<bool>> {
     return piece.iter().rev().map(|y| y.clone()).collect();
 }
 
+// calculates 'neighbors' serialized field for each square on the board
+// each bit in this field represents if a neighbor exists on a particular side of the space
+// a neighbor could be a placed piece or the edge of the board  ☝️👉👇👈
 fn calculate_neighbors_board(board: &mut Board) {
     // TODO refactor this mess
     let board_reference = board.0.clone(); // avoid performance penalty by using unsafe rust when updating board?
@@ -248,6 +261,9 @@ fn calculate_neighbors_board(board: &mut Board) {
     }
 }
 
+// calculates 'neighbors' serialized field for each square on the piece vector
+// if the square represents a piece => Each bit in this field represents if an **open space** exists on a particular side of the space ☝️👉👇👈
+// else (the square represents an open spot) => Each bit in this field represents if a **board piece** exists on a particular side of the space ☝️👉👇👈
 fn calculate_neighbors_piece(piece: &mut Piece) {
     // TODO refactor this mess
     let piece_reference = piece.0.clone(); // avoid performance penalty by using unsafe rust when updating piece?
@@ -402,13 +418,13 @@ fn calculate_neighbors_piece(piece: &mut Piece) {
     }
 }
 
+// recursively attempt piece placements until solution is found or search space has been exhausted
 fn attempt_move(
     board: Board,
     pieces_permuted: Vec<PiecePermuted>,
     should_recurse: bool,
 ) -> Result<Board, Error> {
     // find first 'most restricted' space
-    // board encoding scheme: {3b': piece_used, 1b': is_board, 1'b: is_open, 4b': neighbors}
     // 1st 3-walled space
     let mut target_space = board.0.iter().enumerate().find_map(|(y_index, x_vec)| {
         x_vec.iter().enumerate().find_map(|(x_index, space)| {
@@ -441,19 +457,22 @@ fn attempt_move(
         });
     }
 
-    // do any of the pieces fit over the target space
+    // find a piece that has a valid anchor point (⚓️ the piece onto the board by finding a square on the piece that fits the target space without any neighbor conflicts)
     if let Some((y_index_board, x_index_board)) = target_space {
+        // for each piece
         for (piece_index, piece_permuted) in pieces_permuted.iter().enumerate() {
+            // for each possible orientation of a given piece
             for piece in piece_permuted.piece_permuted.iter() {
+                // 👀 through the piece squares for an ⚓️ point
                 for (y_index_piece_anchor, x_arr) in piece.0.iter().enumerate() {
                     for (x_index_piece_anchor, piece_space_anchor) in x_arr.iter().enumerate() {
-                        // piece anchor should fit onto the board's target space without any neighbor/wall conflicts
+                        // piece ⚓️ should fit onto the board's target space without any neighbor/wall conflicts
                         if piece_space_anchor & 0b_1_0000 == 0b_1_0000
                             && u16::from(*piece_space_anchor)
                                 & (board.0[y_index_board][x_index_board] & 0b_1111)
                                 == (board.0[y_index_board][x_index_board] & 0b_1111)
                         {
-                            // determine if piece is a valid move (given fixed board target space & piece anchor)
+                            // determine if piece is a valid move (given fixed board target space & piece ⚓️)
                             let piece_is_blocked = piece.0.iter().enumerate().any(|(y_index_piece, x_arr2)| x_arr2.iter().enumerate().any(|(x_index_piece, piece_space)|
                                 // check if piece vector item corresponds to a piece square
                                 if piece_space & 0b_1_0000 == 0b_1_0000 {
@@ -463,51 +482,55 @@ fn attempt_move(
                                         if let Some(x_arr2) = board.0.get(target_y_index) {
                                             let target_x_index_opt = (x_index_board + x_index_piece).checked_sub(x_index_piece_anchor);
                                             if let Some(target_x_index) = target_x_index_opt {
-                                                if let Some(piece) = x_arr2.get(target_x_index) {
-                                                    if piece & 0b_1_1_0000 != 0b_1_1_0000 {
+                                                if let Some(board_square) = x_arr2.get(target_x_index) {
+                                                    // board vector item should be 'on the board' & open to constitute a valid overlay
+                                                    if board_square & 0b_1_1_0000 != 0b_1_1_0000 {
                                                         return true
                                                     } else { return false }
                                                 } else { return true }
                                             } else { return true }
                                         } else { return true }
                                     } else { return true }
-                                } else { return false }
+                                } else { return false }  // piece vector item is an empty space, which is always a valid overlay
                             ));
+                            // if the piece fits, update the board accordingly
                             if !piece_is_blocked {
                                 let mut updated_board = Board(board.0.clone());
-                                // update board to reflect piece placement
                                 for (y_index_piece, x_arr2) in piece.0.iter().enumerate() {
                                     for (x_index_piece, piece_space) in x_arr2.iter().enumerate() {
                                         if piece_space & 0b_1_0000 == 0b_1_0000 {
-                                            // don't have to worry about subraction overflow here since checked above
+                                            // don't have to worry about subraction overflow here since already checked above
                                             if let Some(x_arr3) = updated_board.0.get_mut(
                                                 y_index_board + y_index_piece
                                                     - y_index_piece_anchor,
                                             ) {
-                                                if let Some(piece) = x_arr3.get_mut(
+                                                if let Some(board_square) = x_arr3.get_mut(
                                                     x_index_board + x_index_piece
                                                         - x_index_piece_anchor,
                                                 ) {
-                                                    *piece = 0b_1_0_0000
+                                                    // serialize board square as taken by given piece uid
+                                                    *board_square = 0b_1_0_0000
                                                         | u16::from(piece_permuted.uid) << 6
                                                 } else {
-                                                    return Err(Error); // error getting x index of piece during placement
+                                                    return Err(Error::PiecePlacementBounds);
                                                 }
                                             } else {
-                                                return Err(Error); // error getting y index of piece during placement
+                                                return Err(Error::PiecePlacementBounds);
                                             }
                                         }
                                     }
                                 }
+                                // update neighbors serialization after placing the piece
                                 calculate_neighbors_board(&mut updated_board);
                                 let mut updated_pieces = pieces_permuted.clone();
                                 updated_pieces.remove(piece_index);
-                                // return updated board if all pieces have been used
+                                // return updated board if all pieces have been used (or if recursion is disabled)
                                 if updated_pieces.len() == 0 || !should_recurse {
                                     return Ok(updated_board);
                                 }
+                                // recursively attempt moves
                                 let move_res = attempt_move(updated_board, updated_pieces, true);
-                                // return result if puzzle has been solved
+                                // return if puzzle has been solved
                                 if move_res.is_ok() {
                                     return move_res;
                                 }
@@ -518,9 +541,9 @@ fn attempt_move(
             }
         }
     } else {
-        return Err(Error); // No target space on the board was found
+        return Err(Error::NoBoardTargetSpaceFound);
     }
-    return Err(Error); // No solution found
+    return Err(Error::NoSolutionFound);
 }
 
 #[cfg(test)]
@@ -754,7 +777,7 @@ mod tests {
             .collect();
 
         // permute pieces
-        let pieces_permuted = permute_pieces(&pieces).unwrap(); // TODO safely handle this unwrap
+        let pieces_permuted = permute_pieces(&pieces).expect("Pieces should be permutable");
 
         // collect pieces_permuted from calendar_pieces
         let mut expected_pieces_permuted: Vec<PiecePermuted> = calendar_pieces()
@@ -763,15 +786,17 @@ mod tests {
             .map(|piecemeal| piecemeal.piece_permuted.clone().unwrap())
             .collect();
 
-        // populate uid for permuted pieces
+        // populate uid for expected permuted pieces
         for (index, piece) in expected_pieces_permuted.iter_mut().enumerate() {
-            piece.uid = u8::try_from(index).unwrap();
+            piece.uid = u8::try_from(index).expect("More than 256 pieces");
         }
 
         // validate
         for (index, piece_permuted) in pieces_permuted.iter().enumerate() {
             assert_eq!(
-                *expected_pieces_permuted.get(index).unwrap(),
+                *expected_pieces_permuted
+                    .get(index)
+                    .expect("Number of expected pieces should equal the number of permuted pieces"),
                 *piece_permuted
             );
         }
@@ -812,7 +837,7 @@ mod tests {
         assert_eq!(expected_board.0, board.0);
     }
 
-    #[test]
+    #[test]#[rustfmt::skip]
     fn solves_puzzle_tracer() {
         // test the following placement, where:
         //  o = open space, c = closed space, x = placed piece
@@ -826,7 +851,10 @@ mod tests {
             .map(|piecemeal| piecemeal.piece.clone())
             .collect();
 
-        let board: Vec<Vec<bool>> = vec![vec![1, 1, 1], vec![1, 0, 0], vec![1, 0, 0]]
+        let board: Vec<Vec<bool>> = vec![
+            vec![1, 1, 1],
+            vec![1, 0, 0],
+            vec![1, 0, 0]]
             .iter()
             .map(|y| y.iter().map(|x| *x == 1).collect())
             .collect();
@@ -842,27 +870,18 @@ mod tests {
 
         // test the following placement, where:
         //  o = open space, c = closed space, x = placed piece
-        // o o o        x x x
-        // o c c   ->   x c c
-        // o c c        x c c
+        // o o o c        x x x c
+        // c c o o   ->   c c x x
 
-        let board: Vec<Vec<bool>> = vec![vec![1, 1, 1, 0], vec![0, 0, 1, 1]]
+        let board: Vec<Vec<bool>> = vec![
+            vec![1, 1, 1, 0],
+            vec![0, 0, 1, 1]]
             .iter()
             .map(|y| y.iter().map(|x| *x == 1).collect())
             .collect();
         let expected_board = Board(vec![
-            vec![
-                0b_110_1_0_1111,
-                0b_110_1_0_1111,
-                0b_110_1_0_1111,
-                0b_000_0_0_0000,
-            ],
-            vec![
-                0b_000_0_0_0000,
-                0b_000_0_0_0000,
-                0b_110_1_0_1111,
-                0b_110_1_0_1111,
-            ],
+            vec![0b_110_1_0_1111, 0b_110_1_0_1111, 0b_110_1_0_1111, 0b_000_0_0_0000],
+            vec![0b_000_0_0_0000, 0b_000_0_0_0000, 0b_110_1_0_1111, 0b_110_1_0_1111],
         ]);
 
         // attempt puzzle solution
