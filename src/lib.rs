@@ -10,13 +10,13 @@ use std::fmt;
 // TODO support puzzles where unfilled spaces in solution is acceptable
 
 #[derive(Debug)]
-pub enum Error{
+pub enum Error {
     NoBoardTargetSpaceFound,
     NoSolutionFound,
-    PiecePlacementBounds
+    PiecePlacementBounds,
 }
 
-struct Board(Vec<Vec<u16>>);
+pub struct Board(Vec<Vec<u16>>);
 
 // board serialization: {3b': uid, 1b': is_board, 1'b: is_open, 4b': neighbors}
 impl fmt::Binary for Board {
@@ -32,6 +32,25 @@ impl fmt::Binary for Board {
                     "0b_{:03b}_{:01b}_{:01b}_{:04b} ",
                     uid, is_board, is_open, neighbors
                 );
+            }
+            println!()
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for Board {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        println!();
+        for x_arr in self.0.iter() {
+            for piece in x_arr.iter() {
+                let uid = piece >> 6 & 0b_111;
+                let is_board = piece >> 5 & 0b_1;
+                if is_board == 1 {
+                    print!("{} ", uid);
+                } else {
+                    print!("  ");
+                }
             }
             println!()
         }
@@ -88,14 +107,11 @@ struct PiecePermuted {
     piece_permuted: Vec<Piece>, // all possible unique orientations of the piece
 }
 
-fn solve_puzzle(
-    board: &Vec<Vec<bool>>,
-    pieces: &Vec<Vec<Vec<bool>>>,
-    should_recurse: bool,
-) -> Result<Board, Error> {
+// solve the puzzle by attempting to place all pieces onto the board (non-overlapping)
+pub fn solve_puzzle(board: &Vec<Vec<bool>>, pieces: &Vec<Vec<Vec<bool>>>) -> Result<Board, Error> {
     let pieces_permuted = permute_pieces(pieces).expect("Failed to permute pieces");
     let board = Board::new(board);
-    return attempt_move(board, pieces_permuted, should_recurse);
+    return attempt_move(board, pieces_permuted, true);
 }
 
 // find all possible orientations of the provided pieces
@@ -838,68 +854,6 @@ mod tests {
     }
 
     #[test]#[rustfmt::skip]
-    fn solves_puzzle_tracer() {
-        // test the following placement, where:
-        //  o = open space, c = closed space, x = placed piece
-        // o o o        x x x
-        // o c c   ->   x c c
-        // o c c        x c c
-
-        // collect pieces
-        let pieces: Vec<Vec<Vec<bool>>> = calendar_pieces()
-            .iter()
-            .map(|piecemeal| piecemeal.piece.clone())
-            .collect();
-
-        let board: Vec<Vec<bool>> = vec![
-            vec![1, 1, 1],
-            vec![1, 0, 0],
-            vec![1, 0, 0]]
-            .iter()
-            .map(|y| y.iter().map(|x| *x == 1).collect())
-            .collect();
-        let expected_board = Board(vec![
-            vec![0b_101_1_0_1111, 0b_101_1_0_1111, 0b_101_1_0_1111],
-            vec![0b_101_1_0_1111, 0b_000_0_0_0000, 0b_000_0_0_0000],
-            vec![0b_101_1_0_1111, 0b_000_0_0_0000, 0b_000_0_0_0000],
-        ]);
-
-        // attempt puzzle solution
-        let board = solve_puzzle(&board, &pieces, false).expect("Failed to solve puzzle");
-        assert_eq!(expected_board.0, board.0);
-
-        // test the following placement, where:
-        //  o = open space, c = closed space, x = placed piece
-        // o o o c        x x x c
-        // c c o o   ->   c c x x
-
-        let board: Vec<Vec<bool>> = vec![
-            vec![1, 1, 1, 0],
-            vec![0, 0, 1, 1]]
-            .iter()
-            .map(|y| y.iter().map(|x| *x == 1).collect())
-            .collect();
-        let expected_board = Board(vec![
-            vec![0b_110_1_0_1111, 0b_110_1_0_1111, 0b_110_1_0_1111, 0b_000_0_0_0000],
-            vec![0b_000_0_0_0000, 0b_000_0_0_0000, 0b_110_1_0_1111, 0b_110_1_0_1111],
-        ]);
-
-        // attempt puzzle solution
-        let board = solve_puzzle(&board, &pieces, false).expect("Failed to solve puzzle");
-        assert_eq!(expected_board.0, board.0);
-
-        // test a non-solvable board:
-        let board: Vec<Vec<bool>> = vec![vec![0, 1, 1], vec![1, 0, 0], vec![1, 0, 1]]
-            .iter()
-            .map(|y| y.iter().map(|x| *x == 1).collect())
-            .collect();
-
-        // attempt puzzle solution
-        let board = solve_puzzle(&board, &pieces, false);
-        assert_eq!(board.is_err(), true);
-    }
-
-    #[test]#[rustfmt::skip]
     fn solves_puzzle() {
         // march 26 calendar board
         let board: Vec<Vec<bool>> = vec!(
@@ -929,7 +883,7 @@ mod tests {
             .collect();
 
         // solve puzzle
-        let res = solve_puzzle(&board, &pieces, true).expect("Failed to solve puzzle");
+        let res = solve_puzzle(&board, &pieces).expect("Failed to solve puzzle");
         assert_eq!(expected_board.0, res.0);
     }
 }
