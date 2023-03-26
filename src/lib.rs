@@ -1,12 +1,11 @@
 use std::fmt;
 
-// TODO make input generic
 // TODO support non-uniform vector size piece inputs
 //  ((1, 1, 0),
 //   (1))
 // TODO support more than 8 pieces input
 // TODO implement recursion once tracer round complete
-// TODO board/pieces as custom type & implement std::fmt::Binary
+// TODO implement board/piece public interface
 // TODO support puzzles where unfilled spaces in solution is acceptable
 
 #[derive(Debug)]
@@ -34,6 +33,30 @@ impl fmt::Binary for Board {
     }
 }
 
+impl Board {
+    fn new(board: &Vec<Vec<bool>>) -> Self {
+        let mut board = Board(
+            board
+                .iter()
+                .map(|x_arr| {
+                    x_arr
+                        .iter()
+                        .map(|square| {
+                            if *square {
+                                0b_000_1_1_0000
+                            } else {
+                                0b_000_0_0_0000
+                            }
+                        })
+                        .collect()
+                })
+                .collect(),
+        );
+        calculate_neighbors_board(&mut board);
+        board
+    }
+}
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Piece(Vec<Vec<u8>>);
 
@@ -58,11 +81,10 @@ struct PiecePermuted {
     piece_permuted: Vec<Piece>,
 }
 
-pub fn solve_puzzle(
-    board: &Vec<Vec<bool>>,
-    pieces: &Vec<Vec<Vec<bool>>>,
-) -> Result<Vec<Vec<u16>>, Error> {
-    Ok(vec![vec![0, 1], vec![1, 0]])
+fn solve_puzzle(board: &Vec<Vec<bool>>, pieces: &Vec<Vec<Vec<bool>>>) -> Result<Board, Error> {
+    let pieces_permuted = permute_pieces(pieces).expect("Failed to permute pieces");
+    let board = Board::new(board);
+    return attempt_move(board, pieces_permuted);
 }
 
 fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<PiecePermuted>, Error> {
@@ -769,10 +791,75 @@ mod tests {
         ]);
 
         // attempt piece placement
-        if let Ok(board) = attempt_move(board, pieces_permuted) {
-            assert_eq!(expected_board.0, board.0);
-        } else {
-            panic!("failed to attempt move")
-        }
+        let board = attempt_move(board, pieces_permuted).expect("Failed to attempt move");
+        assert_eq!(expected_board.0, board.0);
+    }
+
+    #[test]
+    fn solves_puzzle() {
+        // test the following placement, where:
+        //  o = open space, c = closed space, x = placed piece
+        // o o o        x x x
+        // o c c   ->   x c c
+        // o c c        x c c
+
+        // collect pieces
+        let pieces: Vec<Vec<Vec<bool>>> = calendar_pieces()
+            .iter()
+            .map(|piecemeal| piecemeal.piece.clone())
+            .collect();
+
+        let board: Vec<Vec<bool>> = vec![vec![1, 1, 1], vec![1, 0, 0], vec![1, 0, 0]]
+            .iter()
+            .map(|y| y.iter().map(|x| *x == 1).collect())
+            .collect();
+        let expected_board = Board(vec![
+            vec![0b_101_1_0_1111, 0b_101_1_0_1111, 0b_101_1_0_1111],
+            vec![0b_101_1_0_1111, 0b_000_0_0_0000, 0b_000_0_0_0000],
+            vec![0b_101_1_0_1111, 0b_000_0_0_0000, 0b_000_0_0_0000],
+        ]);
+
+        // attempt puzzle solution
+        let board = solve_puzzle(&board, &pieces).expect("Failed to solve puzzle");
+        assert_eq!(expected_board.0, board.0);
+
+        // test the following placement, where:
+        //  o = open space, c = closed space, x = placed piece
+        // o o o        x x x
+        // o c c   ->   x c c
+        // o c c        x c c
+
+        let board: Vec<Vec<bool>> = vec![vec![1, 1, 1, 0], vec![0, 0, 1, 1]]
+            .iter()
+            .map(|y| y.iter().map(|x| *x == 1).collect())
+            .collect();
+        let expected_board = Board(vec![
+            vec![
+                0b_110_1_0_1111,
+                0b_110_1_0_1111,
+                0b_110_1_0_1111,
+                0b_000_0_0_0000,
+            ],
+            vec![
+                0b_000_0_0_0000,
+                0b_000_0_0_0000,
+                0b_110_1_0_1111,
+                0b_110_1_0_1111,
+            ],
+        ]);
+
+        // attempt puzzle solution
+        let board = solve_puzzle(&board, &pieces).expect("Failed to solve puzzle");
+        assert_eq!(expected_board.0, board.0);
+
+        // test a non-solvable board:
+        let board: Vec<Vec<bool>> = vec![vec![0, 1, 1], vec![1, 0, 0], vec![1, 0, 1]]
+            .iter()
+            .map(|y| y.iter().map(|x| *x == 1).collect())
+            .collect();
+
+        // attempt puzzle solution
+        let board = solve_puzzle(&board, &pieces);
+        assert_eq!(board.is_err(), true);
     }
 }
