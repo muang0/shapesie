@@ -1,7 +1,9 @@
 [package]
 name = "shapesie"
+description = "Solve 2-dimensional shape placement puzzles"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 inquire = { version = "0.6.0", features = ["date", "editor"] }
