@@ -14,6 +14,7 @@ pub enum Error {
     NoBoardTargetSpaceFound,
     NoSolutionFound,
     PiecePlacementBounds,
+    TooManyPieces,
 }
 
 pub struct Board(Vec<Vec<u16>>);
@@ -28,10 +29,11 @@ impl fmt::Binary for Board {
                 let is_board = piece >> 5 & 0b_1;
                 let is_open = piece >> 4 & 0b_1;
                 let neighbors = piece & 0b_1111;
-                print!(
+                write!(
+                    f,
                     "0b_{:03b}_{:01b}_{:01b}_{:04b} ",
                     uid, is_board, is_open, neighbors
-                );
+                )?;
             }
             println!()
         }
@@ -47,9 +49,9 @@ impl fmt::Display for Board {
                 let uid = piece >> 6 & 0b_111;
                 let is_board = piece >> 5 & 0b_1;
                 if is_board == 1 {
-                    print!("{} ", uid);
+                    write!(f, "{} ", uid)?;
                 } else {
-                    print!("  ");
+                    write!(f, "  ")?;
                 }
             }
             println!()
@@ -93,7 +95,7 @@ impl fmt::Binary for Piece {
             for piece in x_arr.iter() {
                 let is_piece = piece >> 4 & 0b_1;
                 let neighbors = piece & 0b_1111;
-                print!("0b_{:01b}_{:04b} ", is_piece, neighbors);
+                write!(f, "0b_{:01b}_{:04b} ", is_piece, neighbors)?;
             }
             println!()
         }
@@ -109,7 +111,7 @@ struct PiecePermuted {
 
 // solve the puzzle by attempting to place all pieces onto the board (non-overlapping)
 pub fn solve_puzzle(board: &Vec<Vec<bool>>, pieces: &Vec<Vec<Vec<bool>>>) -> Result<Board, Error> {
-    let pieces_permuted = permute_pieces(pieces).expect("Failed to permute pieces");
+    let pieces_permuted = permute_pieces(pieces)?;
     let board = Board::new(board);
     return attempt_move(board, pieces_permuted, true);
 }
@@ -120,8 +122,12 @@ fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<PiecePermuted>, Er
     // loop through pieces
     for (index, piece) in pieces.iter().enumerate() {
         // rotate & encode piece 4x
+        let uid_result = u8::try_from(index);
+        if uid_result.is_err() {
+            return Err(Error::TooManyPieces);
+        }
         let mut piece_permuted = PiecePermuted {
-            uid: u8::try_from(index).expect("More than 256 pieces"),
+            uid: uid_result.unwrap(),
             piece_permuted: Vec::new(),
         };
         let mut rotated_piece = piece.clone();
