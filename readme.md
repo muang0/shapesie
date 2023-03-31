@@ -14,4 +14,4 @@ DFS 🌳🕵️‍♀️
     - neighbors: Each bit in this field represents if a neighbor exists on a particular side of the space (a neighbor could be a placed piece or the edge of the board)  ☝️👉👇👈
 - Pieces: 4D array that holds all possible rotations for all pieces.  The 1st dimension iterates across each unique board piece, and the 2nd dimension iterates across all unique rotations of a given piece.  The 3rd & 4th dimension are used for encoding the following information about each piece rotation: {1b': is_piece, 4b': neighbors}.
     - is_piece: does this space represent a piece or empty space?
-    - neighbors: if is_piece {Each bit in this field represents if an **open space** exists on a particular side of the space ☝️👉👇👈} else {Each bit in this field represents if a **board piece** exists on a particular side of the space ☝️👉👇👈}
+    - neighbors: if is_piece {Each bit in this field represents if an **open space** exists on a particular side of the space ☝️👉👇👈} else { zeroed }
