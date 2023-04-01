@@ -5,10 +5,8 @@ use std::fmt;
 //   (1))
 // TODO support more than 8 pieces input
 // TODO refactor neighbor calc fn (DRY)
-// TODO refactor how target space on board is found (DRY)
 // TODO implement board/piece public interface
 // TODO support puzzles where unfilled spaces in solution is acceptable
-// TODO abstract calculate_neighbors functions to handle either board or piece input
 
 #[derive(Debug)]
 pub enum Error {
@@ -305,37 +303,34 @@ fn attempt_move(
     pieces_permuted: Vec<PiecePermuted>,
     should_recurse: bool,
 ) -> Result<Board, Error> {
-    // find first 'most restricted' space
-    // 1st 3-walled space
-    let mut target_space = board.0.iter().enumerate().find_map(|(y_index, x_vec)| {
-        x_vec.iter().enumerate().find_map(|(x_index, space)| {
-            if space & 0b_1_1_0111 == 0b_1_1_0111
-                || space & 0b1_1_1011 == 0b_1_1_1011
-                || space & 0b1_1_1101 == 0b_1_1_1101
-                || space & 0b1_1_1110 == 0b_1_1_1110
-            {
-                return Some((y_index, x_index));
-            } else {
-                return None;
-            }
-        })
-    }); // TODO refactor this pattern of finding the 'most restricted' space (for loop + input of num_walls)
-
-    // if no 3-walled space found, search for fist corner
-    if target_space == None {
-        target_space = board.0.iter().enumerate().find_map(|(y_index, x_vec)| {
-            x_vec.iter().enumerate().find_map(|(x_index, space)| {
-                if space & 0b_1_1_0011 == 0b_1_1_0011
-                    || space & 0b_1_1_1001 == 0b_1_1_1001
-                    || space & 0b_1_1_1100 == 0b_1_1_1100
-                    || space & 0b_1_1_0110 == 0b_1_1_0110
-                {
-                    return Some((y_index, x_index));
-                } else {
-                    return None;
-                }
+    // find target space for attempting piece placement
+    // target space should be the first 'most restricted' space
+    // order of search is: 4-walled spaces (islands), 3-walled spaces (nooks), 2-walled spaces (corners)
+    let target_space_criteria: Vec<Vec<u16>> = vec![
+        vec![0b1111],                         // island
+        vec![0b0111, 0b1011, 0b1101, 0b1110], // nooks
+        vec![0b0011, 0b1001, 0b1100, 0b0110], // corners
+    ];
+    let mut target_space: Option<(usize, usize)> = None;
+    for criteria in target_space_criteria.iter() {
+        if let Some(target_space_indexes) =
+            board.0.iter().enumerate().find_map(|(y_index, x_vec)| {
+                x_vec.iter().enumerate().find_map(|(x_index, space)| {
+                    for neighbor_encoding in criteria.iter() {
+                        // target space will be a valid, open square and match the neighbor_encoding criteria
+                        if space & (neighbor_encoding | 0b_1_1_0000)
+                            == (neighbor_encoding | 0b_1_1_0000)
+                        {
+                            return Some((y_index, x_index));
+                        }
+                    }
+                    None
+                })
             })
-        });
+        {
+            target_space = Some(target_space_indexes);
+            break;
+        }
     }
 
     // find a piece that has a valid anchor point (⚓️ the piece onto the board by finding a square on the piece that fits the target space without any neighbor conflicts)
