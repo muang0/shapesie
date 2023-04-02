@@ -1,8 +1,5 @@
 use std::fmt;
 
-// TODO support non-uniform vector size piece inputs
-//  ((1, 1, 0),
-//   (1))
 // TODO support more than 8 pieces input
 // TODO refactor neighbor calc fn (DRY)
 // TODO implement board/piece public interface
@@ -149,7 +146,14 @@ fn validate_input(board: &Vec<Vec<bool>>, pieces: &Vec<Vec<Vec<bool>>>) -> Resul
 fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<PiecePermuted>, Error> {
     let mut pieces_permuted: Vec<PiecePermuted> = Vec::new();
     // loop through pieces
-    for (index, piece) in pieces.iter().enumerate() {
+    for (index, piece) in pieces.clone().iter_mut().enumerate() {
+        // zero extend rows to uniform length
+        match piece.iter().map(|x_arr| x_arr.len()).max() {
+            Some(row_length) => piece
+                .iter_mut()
+                .for_each(|x_arr| x_arr.resize(row_length, false)),
+            None => continue,
+        }
         // rotate & encode piece 4x
         let uid_result = u8::try_from(index);
         if uid_result.is_err() {
@@ -159,10 +163,8 @@ fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<PiecePermuted>, Er
             uid: uid_result.unwrap(),
             piece_permuted: Vec::new(),
         };
+        piece_permuted.piece_permuted.push(encode_piece(&piece));
         let mut rotated_piece = piece.clone();
-        piece_permuted
-            .piece_permuted
-            .push(encode_piece(&rotated_piece));
         for _ in 0..3 {
             rotated_piece = rotate_piece(&rotated_piece);
             piece_permuted
@@ -440,14 +442,14 @@ mod tests {
             Piecemeal {
                 piece: vec!(
                     vec!(1, 1),
-                    vec!(1, 0),
-                    vec!(1, 0),
-                    vec!(1, 0)
+                    vec!(1),
+                    vec!(1),
+                    vec!(1)
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect(),
                 piece_flipped: Some(vec!(
-                    vec!(1, 0),
-                    vec!(1, 0),
-                    vec!(1, 0),
+                    vec!(1),
+                    vec!(1),
+                    vec!(1),
                     vec!(1, 1),
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect()),
                 piece_rotated: Some(vec!(
@@ -456,9 +458,9 @@ mod tests {
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect()),
                 piece_encoded: Some(vec!(
                     vec!(0b_1_1001, 0b_1_1110),
-                    vec!(0b_1_0101, 0b_0_0000),
-                    vec!(0b_1_0101, 0b_0_0000),
-                    vec!(0b_1_0111, 0b_0_0000),
+                    vec!(0b_1_0101),
+                    vec!(0b_1_0101),
+                    vec!(0b_1_0111),
                 )),
                 piece_permuted: Some(
                     PiecePermuted {
@@ -512,7 +514,7 @@ mod tests {
                 piece: vec!(
                     vec!(1, 0),
                     vec!(1, 1),
-                    vec!(1, 0),
+                    vec!(1),
                     vec!(1, 0)
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect(),
                 piece_flipped: None,
@@ -565,7 +567,7 @@ mod tests {
                 piece: vec!(
                     vec!(0, 0, 1),
                     vec!(1, 1, 1),
-                    vec!(1, 0, 0),
+                    vec!(1),
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect(),
                 piece_flipped: None,
                 piece_rotated: None,
@@ -585,7 +587,7 @@ mod tests {
             Piecemeal {
                 piece: vec!(
                     vec!(1, 0, 0),
-                    vec!(1, 0, 0),
+                    vec!(1),
                     vec!(1, 1, 1),
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect(),
                 piece_flipped: None,
