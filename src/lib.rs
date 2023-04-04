@@ -1,15 +1,14 @@
 use std::fmt;
 
-// TODO support more than 8 pieces input
 // TODO refactor neighbor calc fn (DRY)
 // TODO implement board/piece public interface
 // TODO support puzzles where unfilled spaces in solution is acceptable
+// TODO update board neighbor encoding while placing the piece (avoid performance penalty of recalculating neighbors for entire board each time)
+// TODO perf metric based on cpu time
 
 #[derive(Debug)]
 pub enum Error {
-    NoBoardTargetSpaceFound,
     NoSolutionFound,
-    PiecePlacementBounds,
     TooManyPieces,
     BoardTooTall,
     BoardTooWide,
@@ -119,6 +118,9 @@ pub fn solve_puzzle(board: &Vec<Vec<bool>>, pieces: &Vec<Vec<Vec<bool>>>) -> Res
 
 // validates input constraints
 fn validate_input(board: &Vec<Vec<bool>>, pieces: &Vec<Vec<Vec<bool>>>) -> Result<(), Error> {
+    if pieces.len() > 2 ^ 8 {
+        return Err(Error::TooManyPieces);
+    }
     let board_width_bound = (usize::MAX / 2) - 1;
     if board.len() >= board_width_bound {
         return Err(Error::BoardTooTall);
@@ -237,7 +239,7 @@ fn calculate_neighbors_board(board: &mut Board) {
     for (y_index, x_arr) in board.0.iter_mut().enumerate() {
         for (x_index, square) in x_arr.iter_mut().enumerate() {
             // don't need to calculate neighbors for off-board squares
-            if *square | 0b_111_0_1_1111 == 0b_111_1_1_1111 {
+            if *square | 0b_11111111_0_1_1111 == 0b_11111111_1_1_1111 {
                 let y_index_signed = y_index as isize; // already validated max board input width above
                 let x_index_signed = x_index as isize;
                 let offsets: [(isize, isize); 4] = [(-1, 0), (0, 1), (1, 0), (0, -1)];
@@ -389,11 +391,7 @@ fn attempt_move(
                                                     // serialize board square as taken by given piece uid
                                                     *board_square = 0b_1_0_0000
                                                         | u16::from(piece_permuted.uid) << 6
-                                                } else {
-                                                    return Err(Error::PiecePlacementBounds);
                                                 }
-                                            } else {
-                                                return Err(Error::PiecePlacementBounds);
                                             }
                                         }
                                     }
@@ -418,8 +416,6 @@ fn attempt_move(
                 }
             }
         }
-    } else {
-        return Err(Error::NoBoardTargetSpaceFound);
     }
     return Err(Error::NoSolutionFound);
 }

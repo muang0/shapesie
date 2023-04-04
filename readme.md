@@ -7,7 +7,7 @@ This project is intended to solve a daily [puzzle](https://www.amazon.com/Dragon
 DFS 🌳🕵️‍♀️
 
 ## Data Types
-- Board: 2D array where each element represents a board space.  Each space encodes the following information: {3b': uid, 1b': is_board, 1'b: is_open, 4b': neighbors}.  
+- Board: 2D array where each element represents a board space.  Each space encodes the following information: {8b': uid, 1b': is_board, 1'b: is_open, 4b': neighbors}.  
     - uid: Identifier for which piece is placed in a given space.  In practice, the piece_used field will be extended to 13 bits to make full use of Rusts u16 primitive (we need at least 3 bits for the 8-piece puzzle linked above; although in theory we could get away with only 2 bits depending on how strict we want to be regarding final board representation).
     - is_board: Is this space on the board or out of bounds?
     - is_open: Is this space open or occupied by a piece?
