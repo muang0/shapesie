@@ -1,9 +1,7 @@
 use std::fmt;
 
-// TODO refactor neighbor calc fn (DRY)
 // TODO implement board/piece public interface
 // TODO support puzzles where unfilled spaces in solution is acceptable
-// TODO update board neighbor encoding while placing the piece (avoid performance penalty of recalculating neighbors for entire board each time)
 // TODO perf metric based on cpu time
 
 #[derive(Debug)]
@@ -80,6 +78,48 @@ impl Board {
         );
         calculate_neighbors_board(&mut board);
         board
+    }
+}
+
+fn update_neighbors(board: &mut Board, y_index: usize, x_index: usize) {
+    if let Some(x_arr) = board.0.get_mut(y_index) {
+        if let Some(square) = x_arr.get_mut(x_index) {
+            // if square is not a valid, open space
+            if *square & 0b_1_1_0000 != 0b_1_1_0000 {
+                // update south square
+                if let Some(y_target_index) = y_index.checked_add(1) {
+                    if let Some(target_x_arr) = board.0.get_mut(y_target_index) {
+                        if let Some(target_piece) = target_x_arr.get_mut(x_index) {
+                            *target_piece = *target_piece | 0b_1000;
+                        }
+                    }
+                }
+                // update west square
+                if let Some(x_target_index) = x_index.checked_sub(1) {
+                    if let Some(target_x_arr) = board.0.get_mut(y_index) {
+                        if let Some(target_piece) = target_x_arr.get_mut(x_target_index) {
+                            *target_piece = *target_piece | 0b_0100;
+                        }
+                    }
+                }
+                // update north square
+                if let Some(y_target_index) = y_index.checked_sub(1) {
+                    if let Some(target_x_arr) = board.0.get_mut(y_target_index) {
+                        if let Some(target_piece) = target_x_arr.get_mut(x_index) {
+                            *target_piece = *target_piece | 0b_0010;
+                        }
+                    }
+                }
+                // update east square
+                if let Some(x_target_index) = x_index.checked_add(1) {
+                    if let Some(target_x_arr) = board.0.get_mut(y_index) {
+                        if let Some(target_piece) = target_x_arr.get_mut(x_target_index) {
+                            *target_piece = *target_piece | 0b_0001;
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -380,24 +420,29 @@ fn attempt_move(
                                     for (x_index_piece, piece_space) in x_arr2.iter().enumerate() {
                                         if piece_space & 0b_1_0000 == 0b_1_0000 {
                                             // don't have to worry about subraction overflow here since already checked above
-                                            if let Some(x_arr3) = updated_board.0.get_mut(
-                                                y_index_board + y_index_piece
-                                                    - y_index_piece_anchor,
-                                            ) {
-                                                if let Some(board_square) = x_arr3.get_mut(
-                                                    x_index_board + x_index_piece
-                                                        - x_index_piece_anchor,
-                                                ) {
+                                            let target_y_index = y_index_board + y_index_piece
+                                                - y_index_piece_anchor;
+                                            if let Some(x_arr3) =
+                                                updated_board.0.get_mut(target_y_index)
+                                            {
+                                                let target_x_index = x_index_board + x_index_piece
+                                                    - x_index_piece_anchor;
+                                                if let Some(board_square) =
+                                                    x_arr3.get_mut(target_x_index)
+                                                {
                                                     // serialize board square as taken by given piece uid
-                                                    *board_square = 0b_1_0_0000
-                                                        | u16::from(piece_permuted.uid) << 6
+                                                    *board_square = (*board_square & 0b_1_0_1111)
+                                                        | u16::from(piece_permuted.uid) << 6;
+                                                    update_neighbors(
+                                                        &mut updated_board,
+                                                        target_y_index,
+                                                        target_x_index,
+                                                    );
                                                 }
                                             }
                                         }
                                     }
                                 }
-                                // update neighbors serialization after placing the piece
-                                calculate_neighbors_board(&mut updated_board);
                                 let mut updated_pieces = pieces_permuted.clone();
                                 updated_pieces.remove(piece_index);
                                 // return updated board if all pieces have been used (or if recursion is disabled)
@@ -701,9 +746,9 @@ mod tests {
         ]);
         let expected_board = Board(vec![
             vec![0b_000_1_1_1101, 0b_001_1_0_1110, 0b_001_1_0_1111],
-            vec![0b_000_1_1_0101, 0b_001_1_0_1110, 0b_000_0_1_0000],
-            vec![0b_000_1_1_0101, 0b_001_1_0_1110, 0b_000_0_1_0000],
-            vec![0b_000_1_1_0111, 0b_001_1_0_1110, 0b_000_0_1_0000],
+            vec![0b_000_1_1_0101, 0b_001_1_0_1110, 0b_000_0_1_1001],
+            vec![0b_000_1_1_0101, 0b_001_1_0_1110, 0b_000_0_1_0001],
+            vec![0b_000_1_1_0111, 0b_001_1_0_1110, 0b_000_0_1_0001],
         ]);
 
         // attempt piece placement
@@ -721,17 +766,17 @@ mod tests {
             vec!(1, 1, 1, 1, 1, 1, 1),
             vec!(1, 1, 1, 1, 1, 1, 1),
             vec!(1, 1, 1, 1, 0, 1, 1),
-            vec!(1, 1, 1, 0, 0, 0, 0)
+            vec!(1, 1, 1)
         ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect();
         
         let expected_board = Board(vec!(
-            vec!(0b_000_1_0_1111, 0b_000_1_0_1111, 0b_000_0_0_0000, 0b_001_1_0_1111, 0b_011_1_0_1111, 0b_011_1_0_1111, 0b_000_0_0_0000),
-            vec!(0b_000_1_0_1111, 0b_001_1_0_1111, 0b_001_1_0_1111, 0b_001_1_0_1111, 0b_001_1_0_1111, 0b_011_1_0_1111, 0b_000_0_0_0000),
+            vec!(0b_000_1_0_1111, 0b_000_1_0_1111, 0b_000_0_0_0111, 0b_001_1_0_1111, 0b_011_1_0_1111, 0b_011_1_0_1111, 0b_000_0_0_0001),
+            vec!(0b_000_1_0_1111, 0b_001_1_0_1111, 0b_001_1_0_1111, 0b_001_1_0_1111, 0b_001_1_0_1111, 0b_011_1_0_1111, 0b_000_0_0_0011),
             vec!(0b_000_1_0_1111, 0b_010_1_0_1111, 0b_010_1_0_1111, 0b_010_1_0_1111, 0b_110_1_0_1111, 0b_011_1_0_1111, 0b_011_1_0_1111),
             vec!(0b_000_1_0_1111, 0b_010_1_0_1111, 0b_111_1_0_1111, 0b_010_1_0_1111, 0b_110_1_0_1111, 0b_100_1_0_1111, 0b_100_1_0_1111),
             vec!(0b_101_1_0_1111, 0b_111_1_0_1111, 0b_111_1_0_1111, 0b_110_1_0_1111, 0b_110_1_0_1111, 0b_100_1_0_1111, 0b_100_1_0_1111),
-            vec!(0b_101_1_0_1111, 0b_111_1_0_1111, 0b_111_1_0_1111, 0b_110_1_0_1111, 0b_000_0_0_0000, 0b_100_1_0_1111, 0b_100_1_0_1111),
-            vec!(0b_101_1_0_1111, 0b_101_1_0_1111, 0b_101_1_0_1111, 0b_000_0_0_0000, 0b_000_0_0_0000, 0b_000_0_0_0000, 0b_000_0_0_0000),
+            vec!(0b_101_1_0_1111, 0b_111_1_0_1111, 0b_111_1_0_1111, 0b_110_1_0_1111, 0b_000_0_0_1101, 0b_100_1_0_1111, 0b_100_1_0_1111),
+            vec!(0b_101_1_0_1111, 0b_101_1_0_1111, 0b_101_1_0_1111),
         ));
 
         // collect calendar pieces
@@ -741,7 +786,7 @@ mod tests {
             .collect();
 
         // solve puzzle
-        let res = solve_puzzle(&board, &pieces).expect("Failed to solve puzzle");
+        let res = solve_puzzle(&board, &pieces).expect("Failed to solve puzzle");        
         assert_eq!(expected_board.0, res.0);
     }
 
