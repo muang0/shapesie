@@ -58,7 +58,17 @@ impl fmt::Display for Board {
 }
 
 impl Board {
-    fn new(board: &Vec<Vec<bool>>) -> Self {
+    fn new(board: &Vec<Vec<bool>>) -> Result<Self, Error> {
+        // upper bound on width/height is half of usize::MAX due to design decision of converting usize->isize when calculating neighbors (this allows us to stay DRY and loop through offset tuple array).  Potentially revisit this in the future.
+        let board_width_bound = (usize::MAX / 2) - 1;
+        if board.len() >= board_width_bound {
+            return Err(Error::BoardTooTall);
+        }
+        for x_arr in board.iter() {
+            if x_arr.len() >= board_width_bound {
+                return Err(Error::BoardTooWide);
+            }
+        }
         let mut board = Board(
             board
                 .iter()
@@ -76,45 +86,85 @@ impl Board {
                 })
                 .collect(),
         );
-        calculate_neighbors_board(&mut board);
-        board
+        board.initialize_neighbors();
+        Ok(board)
     }
-}
 
-fn update_neighbors(board: &mut Board, y_index: usize, x_index: usize) {
-    if let Some(x_arr) = board.0.get_mut(y_index) {
-        if let Some(square) = x_arr.get_mut(x_index) {
-            // if square is not a valid, open space
-            if *square & 0b_1_1_0000 != 0b_1_1_0000 {
-                // update south square
-                if let Some(y_target_index) = y_index.checked_add(1) {
-                    if let Some(target_x_arr) = board.0.get_mut(y_target_index) {
-                        if let Some(target_piece) = target_x_arr.get_mut(x_index) {
-                            *target_piece = *target_piece | 0b_1000;
+    // calculates 'neighbors' serialized field for each square on the board
+    // each bit in this field represents if a neighbor exists on a particular side of the space
+    // a neighbor could be a placed piece or the edge of the board  ☝️👉👇👈
+    fn initialize_neighbors(&mut self) {
+        let board_reference = self.0.clone();
+        for (y_index, x_arr) in self.0.iter_mut().enumerate() {
+            for (x_index, square) in x_arr.iter_mut().enumerate() {
+                // don't need to calculate neighbors for off-board squares
+                if *square | 0b_11111111_0_1_1111 == 0b_11111111_1_1_1111 {
+                    let y_index_signed = y_index as isize; // already validated max board input width above
+                    let x_index_signed = x_index as isize;
+                    let offsets: [(isize, isize); 4] = [(-1, 0), (0, 1), (1, 0), (0, -1)];
+                    for (offset_index, (y_offset, x_offset)) in offsets.iter().enumerate() {
+                        let neighbor_open_encoding =
+                            (0b_111_0111 >> offset_index) | 0b_1111_1111_1111_0000;
+                        let neighbor_closed_encoding = !neighbor_open_encoding;
+                        if let Some(x_arr2) =
+                            board_reference.get((y_index_signed + *y_offset) as usize)
+                        {
+                            if let Some(neighbor) =
+                                x_arr2.get((x_index_signed + *x_offset) as usize)
+                            {
+                                if neighbor & 0b_1_1_0000 != 0b_1_1_0000 {
+                                    *square = *square | neighbor_closed_encoding;
+                                // neighbor is off the board or blocked
+                                } else {
+                                    *square = *square & neighbor_open_encoding; // neighbor is a valid, open space
+                                }
+                            } else {
+                                *square = *square | neighbor_closed_encoding; // neighbor is off the board
+                            }
+                        } else {
+                            *square = *square | neighbor_closed_encoding; // neighbor is off the board
                         }
                     }
                 }
-                // update west square
-                if let Some(x_target_index) = x_index.checked_sub(1) {
-                    if let Some(target_x_arr) = board.0.get_mut(y_index) {
-                        if let Some(target_piece) = target_x_arr.get_mut(x_target_index) {
-                            *target_piece = *target_piece | 0b_0100;
+            }
+        }
+    }
+
+    fn update_local_neighbors(&mut self, y_index: usize, x_index: usize) {
+        if let Some(x_arr) = self.0.get_mut(y_index) {
+            if let Some(square) = x_arr.get_mut(x_index) {
+                // if square is not a valid, open space
+                if *square & 0b_1_1_0000 != 0b_1_1_0000 {
+                    // update south square
+                    if let Some(y_target_index) = y_index.checked_add(1) {
+                        if let Some(target_x_arr) = self.0.get_mut(y_target_index) {
+                            if let Some(target_piece) = target_x_arr.get_mut(x_index) {
+                                *target_piece = *target_piece | 0b_1000;
+                            }
                         }
                     }
-                }
-                // update north square
-                if let Some(y_target_index) = y_index.checked_sub(1) {
-                    if let Some(target_x_arr) = board.0.get_mut(y_target_index) {
-                        if let Some(target_piece) = target_x_arr.get_mut(x_index) {
-                            *target_piece = *target_piece | 0b_0010;
+                    // update west square
+                    if let Some(x_target_index) = x_index.checked_sub(1) {
+                        if let Some(target_x_arr) = self.0.get_mut(y_index) {
+                            if let Some(target_piece) = target_x_arr.get_mut(x_target_index) {
+                                *target_piece = *target_piece | 0b_0100;
+                            }
                         }
                     }
-                }
-                // update east square
-                if let Some(x_target_index) = x_index.checked_add(1) {
-                    if let Some(target_x_arr) = board.0.get_mut(y_index) {
-                        if let Some(target_piece) = target_x_arr.get_mut(x_target_index) {
-                            *target_piece = *target_piece | 0b_0001;
+                    // update north square
+                    if let Some(y_target_index) = y_index.checked_sub(1) {
+                        if let Some(target_x_arr) = self.0.get_mut(y_target_index) {
+                            if let Some(target_piece) = target_x_arr.get_mut(x_index) {
+                                *target_piece = *target_piece | 0b_0010;
+                            }
+                        }
+                    }
+                    // update east square
+                    if let Some(x_target_index) = x_index.checked_add(1) {
+                        if let Some(target_x_arr) = self.0.get_mut(y_index) {
+                            if let Some(target_piece) = target_x_arr.get_mut(x_target_index) {
+                                *target_piece = *target_piece | 0b_0001;
+                            }
                         }
                     }
                 }
@@ -125,6 +175,107 @@ fn update_neighbors(board: &mut Board, y_index: usize, x_index: usize) {
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Piece(Vec<Vec<u8>>);
+
+impl Piece {
+    fn new(piece: &Vec<Vec<bool>>) -> Result<Piece, Error> {
+        // upper bound on width/height is half of usize::MAX due to design decision of converting usize->isize when calculating neighbors (this allows us to loop through offset tuple array).  Potentially revisit this in the future.
+        let piece_width_bound = (usize::MAX / 2) - 1;
+        if piece.len() >= piece_width_bound {
+            return Err(Error::PieceTooTall);
+        }
+        for x_arr in piece.iter() {
+            if x_arr.len() >= piece_width_bound {
+                return Err(Error::PieceTooWide);
+            }
+        }
+        let mut encoded_piece = Piece(
+            piece
+                .iter()
+                .map(|x_arr| {
+                    x_arr
+                        .iter()
+                        .map(|is_piece| {
+                            if *is_piece {
+                                return 0b_1_0000;
+                            } else {
+                                return 0b_0_0000;
+                            }
+                        })
+                        .collect()
+                })
+                .collect(),
+        );
+        encoded_piece.initialize_neighbors();
+        Ok(encoded_piece)
+    }
+
+    // copies and flips a piece
+    fn flip(&self) -> Result<Piece, Error> {
+        let piece: Vec<Vec<bool>> = self
+            .0
+            .iter()
+            .rev()
+            .map(|x_arr| {
+                x_arr
+                    .iter()
+                    .map(|square| *square & 0b_1_0000 == 0b_1_0000)
+                    .collect()
+            })
+            .collect();
+        Piece::new(&piece)
+    }
+
+    // copies and rotates a piece (90 degrees clockwise)
+    fn rotate(&self) -> Result<Piece, Error> {
+        let mut rotated_piece = vec![vec![false; self.0.len()]; self.0[0].len()];
+        for (y_index, x_vec) in self.0.iter().rev().enumerate() {
+            for (x_index, val) in x_vec.iter().enumerate() {
+                if val & 0b_1_0000 == 0b_1_0000 {
+                    rotated_piece[x_index][y_index] = true;
+                }
+            }
+        }
+        Piece::new(&rotated_piece)
+    }
+
+    // calculates 'neighbors' serialized field for each square on the piece vector
+    // if the square represents a piece => Each bit in this field represents if an **open space** exists on a particular side of the space ☝️👉👇👈
+    fn initialize_neighbors(&mut self) {
+        let piece_reference = self.0.clone();
+        for (y_index, x_arr) in self.0.iter_mut().enumerate() {
+            for (x_index, square) in x_arr.iter_mut().enumerate() {
+                // don't need to calculate neighbors for off-board squares
+                if *square & 0b_1_0000 == 0b_1_0000 {
+                    let y_index_signed = y_index as isize; // already validated max piece input width above
+                    let x_index_signed = x_index as isize;
+                    let offsets: [(isize, isize); 4] = [(-1, 0), (0, 1), (1, 0), (0, -1)];
+                    for (offset_index, (y_offset, x_offset)) in offsets.iter().enumerate() {
+                        let neighbor_open_encoding = (0b_1111_0111 >> offset_index) | 0b_1111_0000;
+                        let neighbor_closed_encoding = !neighbor_open_encoding;
+                        if let Some(x_arr2) =
+                            piece_reference.get((y_index_signed + *y_offset) as usize)
+                        {
+                            if let Some(neighbor) =
+                                x_arr2.get((x_index_signed + *x_offset) as usize)
+                            {
+                                if neighbor & 0b_1_0000 != 0b_1_0000 {
+                                    *square = *square | neighbor_closed_encoding;
+                                // neighbor is not a piece
+                                } else {
+                                    *square = *square & neighbor_open_encoding; // neighbor is a piece
+                                }
+                            } else {
+                                *square = *square | neighbor_closed_encoding; // neighbor is not a piece
+                            }
+                        } else {
+                            *square = *square | neighbor_closed_encoding; // neighbor is not a piece
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 // piece serialization : {1b': is_piece, 4b': neighbors}
 impl fmt::Binary for Piece {
@@ -150,42 +301,16 @@ struct PiecePermuted {
 
 // solve the puzzle by attempting to place all pieces onto the board (non-overlapping)
 pub fn solve_puzzle(board: &Vec<Vec<bool>>, pieces: &Vec<Vec<Vec<bool>>>) -> Result<Board, Error> {
-    validate_input(board, pieces)?;
     let pieces_permuted = permute_pieces(pieces)?;
-    let board = Board::new(board);
+    let board = Board::new(board)?;
     return attempt_move(board, pieces_permuted, true);
-}
-
-// validates input constraints
-fn validate_input(board: &Vec<Vec<bool>>, pieces: &Vec<Vec<Vec<bool>>>) -> Result<(), Error> {
-    if pieces.len() > 2 ^ 8 {
-        return Err(Error::TooManyPieces);
-    }
-    let board_width_bound = (usize::MAX / 2) - 1;
-    if board.len() >= board_width_bound {
-        return Err(Error::BoardTooTall);
-    }
-    for x_arr in board.iter() {
-        if x_arr.len() >= board_width_bound {
-            return Err(Error::BoardTooWide);
-        }
-    }
-    for piece in pieces.iter() {
-        let piece_width_bound = (usize::MAX / 2) - 1;
-        if piece.len() >= piece_width_bound {
-            return Err(Error::PieceTooTall);
-        }
-        for x_arr in piece.iter() {
-            if x_arr.len() >= piece_width_bound {
-                return Err(Error::PieceTooWide);
-            }
-        }
-    }
-    Ok(())
 }
 
 // find all possible orientations of the provided pieces
 fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<PiecePermuted>, Error> {
+    if pieces.len() > 2 ^ 8 {
+        return Err(Error::TooManyPieces);
+    }
     let mut pieces_permuted: Vec<PiecePermuted> = Vec::new();
     // loop through pieces
     for (index, piece) in pieces.clone().iter_mut().enumerate() {
@@ -205,24 +330,22 @@ fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<PiecePermuted>, Er
             uid: uid_result.unwrap(),
             piece_permuted: Vec::new(),
         };
-        piece_permuted.piece_permuted.push(encode_piece(&piece));
-        let mut rotated_piece = piece.clone();
+        piece_permuted.piece_permuted.push(Piece::new(&piece)?);
+        let mut rotated_piece = Piece::new(&piece)?;
         for _ in 0..3 {
-            rotated_piece = rotate_piece(&rotated_piece);
-            piece_permuted
-                .piece_permuted
-                .push(encode_piece(&rotated_piece))
+            rotated_piece = rotated_piece.rotate()?;
+            piece_permuted.piece_permuted.push(rotated_piece.clone())
         }
         // flip piece, then rotate & encode 4x
-        let mut flipped_rotated_piece = flip_piece(&piece.clone());
         piece_permuted
             .piece_permuted
-            .push(encode_piece(&flipped_rotated_piece));
+            .push(Piece::new(&piece)?.flip()?);
+        let mut flipped_rotated_piece = Piece::new(&piece)?.flip()?;
         for _ in 0..3 {
-            flipped_rotated_piece = rotate_piece(&flipped_rotated_piece);
+            flipped_rotated_piece = flipped_rotated_piece.rotate()?;
             piece_permuted
                 .piece_permuted
-                .push(encode_piece(&flipped_rotated_piece))
+                .push(flipped_rotated_piece.clone())
         }
         // remove duplicate piece permutations
         piece_permuted.piece_permuted.sort();
@@ -230,115 +353,6 @@ fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<PiecePermuted>, Er
         pieces_permuted.push(piece_permuted)
     }
     return Ok(pieces_permuted);
-}
-
-// piece serialization : {1b': is_piece, 4b': neighbors}
-fn encode_piece(piece: &Vec<Vec<bool>>) -> Piece {
-    let mut encoded_piece = Piece(
-        piece
-            .iter()
-            .map(|x_arr| {
-                x_arr
-                    .iter()
-                    .map(|is_piece| {
-                        if *is_piece {
-                            return 0b_1_0000;
-                        } else {
-                            return 0b_0_0000;
-                        }
-                    })
-                    .collect()
-            })
-            .collect(),
-    );
-    calculate_neighbors_piece(&mut encoded_piece);
-    return encoded_piece;
-}
-
-// copies and rotates a piece (90 degrees clockwise)
-fn rotate_piece(piece: &Vec<Vec<bool>>) -> Vec<Vec<bool>> {
-    let mut rotated_piece = vec![vec![false; piece.len()]; piece[0].len()];
-    for (y_index, x_vec) in piece.iter().rev().enumerate() {
-        for (x_index, val) in x_vec.iter().enumerate() {
-            rotated_piece[x_index][y_index] = val.clone();
-        }
-    }
-    return rotated_piece;
-}
-
-// copies and flips a piece
-fn flip_piece(piece: &Vec<Vec<bool>>) -> Vec<Vec<bool>> {
-    return piece.iter().rev().map(|y| y.clone()).collect();
-}
-
-// calculates 'neighbors' serialized field for each square on the board
-// each bit in this field represents if a neighbor exists on a particular side of the space
-// a neighbor could be a placed piece or the edge of the board  ☝️👉👇👈
-fn calculate_neighbors_board(board: &mut Board) {
-    let board_reference = board.0.clone();
-    for (y_index, x_arr) in board.0.iter_mut().enumerate() {
-        for (x_index, square) in x_arr.iter_mut().enumerate() {
-            // don't need to calculate neighbors for off-board squares
-            if *square | 0b_11111111_0_1_1111 == 0b_11111111_1_1_1111 {
-                let y_index_signed = y_index as isize; // already validated max board input width above
-                let x_index_signed = x_index as isize;
-                let offsets: [(isize, isize); 4] = [(-1, 0), (0, 1), (1, 0), (0, -1)];
-                for (offset_index, (y_offset, x_offset)) in offsets.iter().enumerate() {
-                    let neighbor_open_encoding =
-                        (0b_111_0111 >> offset_index) | 0b_1111_1111_1111_0000;
-                    let neighbor_closed_encoding = !neighbor_open_encoding;
-                    if let Some(x_arr2) = board_reference.get((y_index_signed + *y_offset) as usize)
-                    {
-                        if let Some(neighbor) = x_arr2.get((x_index_signed + *x_offset) as usize) {
-                            if neighbor & 0b_1_1_0000 != 0b_1_1_0000 {
-                                *square = *square | neighbor_closed_encoding; // neighbor is off the board or blocked
-                            } else {
-                                *square = *square & neighbor_open_encoding; // neighbor is a valid, open space
-                            }
-                        } else {
-                            *square = *square | neighbor_closed_encoding; // neighbor is off the board
-                        }
-                    } else {
-                        *square = *square | neighbor_closed_encoding; // neighbor is off the board
-                    }
-                }
-            }
-        }
-    }
-}
-
-// calculates 'neighbors' serialized field for each square on the piece vector
-// if the square represents a piece => Each bit in this field represents if an **open space** exists on a particular side of the space ☝️👉👇👈
-fn calculate_neighbors_piece(piece: &mut Piece) {
-    let piece_reference = piece.0.clone();
-    for (y_index, x_arr) in piece.0.iter_mut().enumerate() {
-        for (x_index, square) in x_arr.iter_mut().enumerate() {
-            // don't need to calculate neighbors for off-board squares
-            if *square & 0b_1_0000 == 0b_1_0000 {
-                let y_index_signed = y_index as isize; // already validated max piece input width above
-                let x_index_signed = x_index as isize;
-                let offsets: [(isize, isize); 4] = [(-1, 0), (0, 1), (1, 0), (0, -1)];
-                for (offset_index, (y_offset, x_offset)) in offsets.iter().enumerate() {
-                    let neighbor_open_encoding = (0b_1111_0111 >> offset_index) | 0b_1111_0000;
-                    let neighbor_closed_encoding = !neighbor_open_encoding;
-                    if let Some(x_arr2) = piece_reference.get((y_index_signed + *y_offset) as usize)
-                    {
-                        if let Some(neighbor) = x_arr2.get((x_index_signed + *x_offset) as usize) {
-                            if neighbor & 0b_1_0000 != 0b_1_0000 {
-                                *square = *square | neighbor_closed_encoding; // neighbor is not a piece
-                            } else {
-                                *square = *square & neighbor_open_encoding; // neighbor is a piece
-                            }
-                        } else {
-                            *square = *square | neighbor_closed_encoding; // neighbor is not a piece
-                        }
-                    } else {
-                        *square = *square | neighbor_closed_encoding; // neighbor is not a piece
-                    }
-                }
-            }
-        }
-    }
 }
 
 // recursively attempt piece placements until solution is found or search space has been exhausted
@@ -433,8 +447,7 @@ fn attempt_move(
                                                     // serialize board square as taken by given piece uid
                                                     *board_square = (*board_square & 0b_1_0_1111)
                                                         | u16::from(piece_permuted.uid) << 6;
-                                                    update_neighbors(
-                                                        &mut updated_board,
+                                                    updated_board.update_local_neighbors(
                                                         target_y_index,
                                                         target_x_index,
                                                     );
@@ -471,8 +484,8 @@ mod tests {
 
     struct Piecemeal {
         piece: Vec<Vec<bool>>,
-        piece_flipped: Option<Vec<Vec<bool>>>,
-        piece_rotated: Option<Vec<Vec<bool>>>,
+        piece_flipped: Option<Piece>,
+        piece_rotated: Option<Piece>,
         piece_encoded: Option<Vec<Vec<u8>>>,
         piece_permuted: Option<PiecePermuted>,
     }
@@ -487,16 +500,16 @@ mod tests {
                     vec!(1),
                     vec!(1)
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect(),
-                piece_flipped: Some(vec!(
-                    vec!(1),
-                    vec!(1),
-                    vec!(1),
-                    vec!(1, 1),
-                ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect()),
-                piece_rotated: Some(vec!(
-                    vec!(1, 1, 1, 1),
-                    vec!(0, 0, 0, 1)
-                ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect()),
+                piece_flipped: Some(Piece(vec!(
+                    vec!(0b_1_1101),
+                    vec!(0b_1_0101),
+                    vec!(0b_1_0101),
+                    vec!(0b_1_0011, 0b_1_1110),
+                ))),
+                piece_rotated: Some(Piece(vec!(
+                    vec!(0b_1_1011, 0b_1_1010, 0b_1_1010, 0b_1_1100),
+                    vec!(0b_0_0000, 0b_0_0000, 0b_0_0000, 0b_1_0111)
+                ))),
                 piece_encoded: Some(vec!(
                     vec!(0b_1_1001, 0b_1_1110),
                     vec!(0b_1_0101),
@@ -568,15 +581,15 @@ mod tests {
                     vec!(1, 0, 1),
                     vec!(1, 1, 1),
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect(),
-                piece_flipped: Some(vec!(
-                    vec!(1, 1, 1),
-                    vec!(1, 0, 1)
-                ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect()),
-                piece_rotated: Some(vec!(
-                    vec!(1, 1),
-                    vec!(1, 0),
-                    vec!(1, 1),
-                ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect()),
+                piece_flipped: Some(Piece(vec!(
+                    vec!(0b_1_1001, 0b_1_1010, 0b_1_1100),
+                    vec!(0b_1_0111, 0b_0_0000, 0b_1_0111)
+                ))),
+                piece_rotated: Some(Piece(vec!(
+                    vec!(0b_1_1001, 0b_1_1110),
+                    vec!(0b_1_0101, 0b_0_0000),
+                    vec!(0b_1_0011, 0b_1_1110),
+                ))),
                 piece_encoded: None,
                 piece_permuted: Some(
                     PiecePermuted { 
@@ -663,7 +676,10 @@ mod tests {
     fn flips_piece() {
         for piecemeal in calendar_pieces() {
             if let Some(piece_flipped) = piecemeal.piece_flipped {
-                assert_eq!(piece_flipped, flip_piece(&piecemeal.piece));
+                assert_eq!(
+                    piece_flipped,
+                    Piece::new(&piecemeal.piece).unwrap().flip().unwrap()
+                );
             }
         }
     }
@@ -672,7 +688,10 @@ mod tests {
     fn rotates_piece() {
         for piecemeal in calendar_pieces() {
             if let Some(piece_rotated) = piecemeal.piece_rotated {
-                assert_eq!(piece_rotated, rotate_piece(&piecemeal.piece));
+                assert_eq!(
+                    piece_rotated,
+                    Piece::new(&piecemeal.piece).unwrap().rotate().unwrap()
+                );
             }
         }
     }
@@ -681,7 +700,7 @@ mod tests {
     fn encodes_piece() {
         for piecemeal in calendar_pieces() {
             if let Some(piece_encoded) = piecemeal.piece_encoded {
-                assert_eq!(piece_encoded, encode_piece(&piecemeal.piece).0);
+                assert_eq!(piece_encoded, Piece::new(&piecemeal.piece).unwrap().0);
             }
         }
     }
