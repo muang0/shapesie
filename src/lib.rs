@@ -174,22 +174,22 @@ impl Board {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct Piece(Vec<Vec<u8>>);
+struct Placement(Vec<Vec<u8>>);
 
-impl Piece {
-    fn new(piece: &Vec<Vec<bool>>) -> Result<Piece, Error> {
+impl Placement {
+    fn new(raw_placement: &Vec<Vec<bool>>) -> Result<Placement, Error> {
         // upper bound on width/height is half of usize::MAX due to design decision of converting usize->isize when calculating neighbors (this allows us to loop through offset tuple array).  Potentially revisit this in the future.
         let piece_width_bound = (usize::MAX / 2) - 1;
-        if piece.len() >= piece_width_bound {
+        if raw_placement.len() >= piece_width_bound {
             return Err(Error::PieceTooTall);
         }
-        for x_arr in piece.iter() {
+        for x_arr in raw_placement.iter() {
             if x_arr.len() >= piece_width_bound {
                 return Err(Error::PieceTooWide);
             }
         }
-        let mut encoded_piece = Piece(
-            piece
+        let mut encoded_placement = Placement(
+            raw_placement
                 .iter()
                 .map(|x_arr| {
                     x_arr
@@ -205,12 +205,12 @@ impl Piece {
                 })
                 .collect(),
         );
-        encoded_piece.initialize_neighbors();
-        Ok(encoded_piece)
+        encoded_placement.initialize_neighbors();
+        Ok(encoded_placement)
     }
 
-    // copies and flips a piece
-    fn flip(&self) -> Result<Piece, Error> {
+    // copies and flips a placement
+    fn flip(&self) -> Result<Placement, Error> {
         let piece: Vec<Vec<bool>> = self
             .0
             .iter()
@@ -222,20 +222,20 @@ impl Piece {
                     .collect()
             })
             .collect();
-        Piece::new(&piece)
+        Placement::new(&piece)
     }
 
-    // copies and rotates a piece (90 degrees clockwise)
-    fn rotate(&self) -> Result<Piece, Error> {
-        let mut rotated_piece = vec![vec![false; self.0.len()]; self.0[0].len()];
+    // copies and rotates a placement (90 degrees clockwise)
+    fn rotate(&self) -> Result<Placement, Error> {
+        let mut rotated_placement = vec![vec![false; self.0.len()]; self.0[0].len()];
         for (y_index, x_vec) in self.0.iter().rev().enumerate() {
             for (x_index, val) in x_vec.iter().enumerate() {
                 if val & 0b_1_0000 == 0b_1_0000 {
-                    rotated_piece[x_index][y_index] = true;
+                    rotated_placement[x_index][y_index] = true;
                 }
             }
         }
-        Piece::new(&rotated_piece)
+        Placement::new(&rotated_placement)
     }
 
     // calculates 'neighbors' serialized field for each square on the piece vector
@@ -278,7 +278,7 @@ impl Piece {
 }
 
 // piece serialization : {1b': is_piece, 4b': neighbors}
-impl fmt::Binary for Piece {
+impl fmt::Binary for Placement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         println!();
         for x_arr in self.0.iter() {
@@ -294,73 +294,81 @@ impl fmt::Binary for Piece {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct PiecePermuted {
+struct Piece {
     uid: u8,                    // used for identifying the piece once placed on the board
-    piece_permuted: Vec<Piece>, // all possible unique orientations of the piece
+    placements: Vec<Placement>, // all possible unique orientations of the piece
+}
+
+#[derive(Clone)]
+struct Hand {
+    pieces: Vec<Piece>,
+}
+
+impl Hand {
+    fn new(raw_pieces: &Vec<Vec<Vec<bool>>>) -> Result<Self, Error> {
+        if raw_pieces.len() > (2 ^ 8) {
+            return Err(Error::TooManyPieces);
+        }
+        let mut hand = Hand { pieces: vec![] };
+        // loop through pieces
+        for (index, raw_piece) in raw_pieces.clone().iter_mut().enumerate() {
+            // zero extend rows to uniform length
+            match raw_piece.iter().map(|x_arr| x_arr.len()).max() {
+                Some(row_length) => raw_piece
+                    .iter_mut()
+                    .for_each(|x_arr| x_arr.resize(row_length, false)),
+                None => continue,
+            }
+            // rotate & encode piece 4x
+            let uid_result = u8::try_from(index);
+            if uid_result.is_err() {
+                return Err(Error::TooManyPieces);
+            }
+            let mut encoded_piece = Piece {
+                uid: uid_result.unwrap(),
+                placements: Vec::new(),
+            };
+            encoded_piece.placements.push(Placement::new(&raw_piece)?);
+            let mut rotated_placement = Placement::new(&raw_piece)?;
+            for _ in 0..3 {
+                rotated_placement = rotated_placement.rotate()?;
+                encoded_piece.placements.push(rotated_placement.clone())
+            }
+            // flip piece, then rotate & encode 4x
+            encoded_piece
+                .placements
+                .push(Placement::new(&raw_piece)?.flip()?);
+            let mut flipped_rotated_placement = Placement::new(&raw_piece)?.flip()?;
+            for _ in 0..3 {
+                flipped_rotated_placement = flipped_rotated_placement.rotate()?;
+                encoded_piece
+                    .placements
+                    .push(flipped_rotated_placement.clone())
+            }
+            // remove duplicate piece permutations
+            encoded_piece.placements.sort();
+            encoded_piece.placements.dedup();
+            hand.pieces.push(encoded_piece)
+        }
+        Ok(hand)
+    }
+
+    fn remove_piece_by_uid(&mut self, uid: u8) {
+        if let Some(piece_index) = self.pieces.iter().position(|piece| piece.uid == uid) {
+            self.pieces.remove(piece_index);
+        }
+    }
 }
 
 // solve the puzzle by attempting to place all pieces onto the board (non-overlapping)
 pub fn solve_puzzle(board: &Vec<Vec<bool>>, pieces: &Vec<Vec<Vec<bool>>>) -> Result<Board, Error> {
-    let pieces_permuted = permute_pieces(pieces)?;
+    let hand = Hand::new(pieces)?;
     let board = Board::new(board)?;
-    return attempt_move(board, pieces_permuted, true);
-}
-
-// find all possible orientations of the provided pieces
-fn permute_pieces(pieces: &Vec<Vec<Vec<bool>>>) -> Result<Vec<PiecePermuted>, Error> {
-    if pieces.len() > 2 ^ 8 {
-        return Err(Error::TooManyPieces);
-    }
-    let mut pieces_permuted: Vec<PiecePermuted> = Vec::new();
-    // loop through pieces
-    for (index, piece) in pieces.clone().iter_mut().enumerate() {
-        // zero extend rows to uniform length
-        match piece.iter().map(|x_arr| x_arr.len()).max() {
-            Some(row_length) => piece
-                .iter_mut()
-                .for_each(|x_arr| x_arr.resize(row_length, false)),
-            None => continue,
-        }
-        // rotate & encode piece 4x
-        let uid_result = u8::try_from(index);
-        if uid_result.is_err() {
-            return Err(Error::TooManyPieces);
-        }
-        let mut piece_permuted = PiecePermuted {
-            uid: uid_result.unwrap(),
-            piece_permuted: Vec::new(),
-        };
-        piece_permuted.piece_permuted.push(Piece::new(&piece)?);
-        let mut rotated_piece = Piece::new(&piece)?;
-        for _ in 0..3 {
-            rotated_piece = rotated_piece.rotate()?;
-            piece_permuted.piece_permuted.push(rotated_piece.clone())
-        }
-        // flip piece, then rotate & encode 4x
-        piece_permuted
-            .piece_permuted
-            .push(Piece::new(&piece)?.flip()?);
-        let mut flipped_rotated_piece = Piece::new(&piece)?.flip()?;
-        for _ in 0..3 {
-            flipped_rotated_piece = flipped_rotated_piece.rotate()?;
-            piece_permuted
-                .piece_permuted
-                .push(flipped_rotated_piece.clone())
-        }
-        // remove duplicate piece permutations
-        piece_permuted.piece_permuted.sort();
-        piece_permuted.piece_permuted.dedup();
-        pieces_permuted.push(piece_permuted)
-    }
-    return Ok(pieces_permuted);
+    return attempt_move(board, hand, true);
 }
 
 // recursively attempt piece placements until solution is found or search space has been exhausted
-fn attempt_move(
-    board: Board,
-    pieces_permuted: Vec<PiecePermuted>,
-    should_recurse: bool,
-) -> Result<Board, Error> {
+fn attempt_move(board: Board, hand: Hand, should_recurse: bool) -> Result<Board, Error> {
     // find target space for attempting piece placement
     // target space should be the first 'most restricted' space
     // order of search is: 4-walled spaces (islands), 3-walled spaces (nooks), 2-walled spaces (corners)
@@ -394,21 +402,21 @@ fn attempt_move(
     // find a piece that has a valid anchor point (⚓️ the piece onto the board by finding a square on the piece that fits the target space without any neighbor conflicts)
     if let Some((y_index_board, x_index_board)) = target_space {
         // for each piece
-        for (piece_index, piece_permuted) in pieces_permuted.iter().enumerate() {
+        for piece in hand.pieces.iter() {
             // for each possible orientation of a given piece
-            for piece in piece_permuted.piece_permuted.iter() {
-                // 👀 through the piece squares for an ⚓️ point
-                for (y_index_piece_anchor, x_arr) in piece.0.iter().enumerate() {
+            for placement in piece.placements.iter() {
+                // 👀 through the placement squares for an ⚓️ point
+                for (y_index_piece_anchor, x_arr) in placement.0.iter().enumerate() {
                     for (x_index_piece_anchor, piece_space_anchor) in x_arr.iter().enumerate() {
-                        // piece ⚓️ should fit onto the board's target space without any neighbor/wall conflicts
+                        // placement ⚓️ should fit onto the board's target space without any neighbor/wall conflicts
                         if piece_space_anchor & 0b_1_0000 == 0b_1_0000
                             && u16::from(*piece_space_anchor)
                                 & (board.0[y_index_board][x_index_board] & 0b_1111)
                                 == (board.0[y_index_board][x_index_board] & 0b_1111)
                         {
-                            // determine if piece is a valid move (given fixed board target space & piece ⚓️)
-                            let piece_is_blocked = piece.0.iter().enumerate().any(|(y_index_piece, x_arr2)| x_arr2.iter().enumerate().any(|(x_index_piece, piece_space)|
-                                // check if piece vector item corresponds to a piece square
+                            // determine if placement is a valid move (given fixed board target space & placement ⚓️)
+                            let piece_is_blocked = placement.0.iter().enumerate().any(|(y_index_piece, x_arr2)| x_arr2.iter().enumerate().any(|(x_index_piece, piece_space)|
+                                // check if placement vector item corresponds to a placement square
                                 if piece_space & 0b_1_0000 == 0b_1_0000 {
                                     // check if associated board square is open
                                     let target_y_index_opt = (y_index_board + y_index_piece).checked_sub(y_index_piece_anchor);
@@ -425,12 +433,12 @@ fn attempt_move(
                                             } else { return true }
                                         } else { return true }
                                     } else { return true }
-                                } else { return false }  // piece vector item is an empty space, which is always a valid overlay
+                                } else { return false }  // placement vector item is an empty space, which is always a valid overlay
                             ));
-                            // if the piece fits, update the board accordingly
+                            // if the placement fits, update the board accordingly
                             if !piece_is_blocked {
                                 let mut updated_board = Board(board.0.clone());
-                                for (y_index_piece, x_arr2) in piece.0.iter().enumerate() {
+                                for (y_index_piece, x_arr2) in placement.0.iter().enumerate() {
                                     for (x_index_piece, piece_space) in x_arr2.iter().enumerate() {
                                         if piece_space & 0b_1_0000 == 0b_1_0000 {
                                             // don't have to worry about subraction overflow here since already checked above
@@ -446,7 +454,7 @@ fn attempt_move(
                                                 {
                                                     // serialize board square as taken by given piece uid
                                                     *board_square = (*board_square & 0b_1_0_1111)
-                                                        | u16::from(piece_permuted.uid) << 6;
+                                                        | u16::from(piece.uid) << 6;
                                                     updated_board.update_local_neighbors(
                                                         target_y_index,
                                                         target_x_index,
@@ -456,14 +464,15 @@ fn attempt_move(
                                         }
                                     }
                                 }
-                                let mut updated_pieces = pieces_permuted.clone();
-                                updated_pieces.remove(piece_index);
+                                let mut updated_hand = hand.clone();
+                                updated_hand.remove_piece_by_uid(piece.uid);
                                 // return updated board if all pieces have been used (or if recursion is disabled)
-                                if updated_pieces.len() == 0 || !should_recurse {
+                                if updated_hand.pieces.len() == 0 || !should_recurse {
                                     return Ok(updated_board);
                                 }
                                 // recursively attempt moves
-                                let move_res = attempt_move(updated_board, updated_pieces, true);
+                                let move_res =
+                                    attempt_move(updated_board, updated_hand, should_recurse);
                                 // return if puzzle has been solved
                                 if move_res.is_ok() {
                                     return move_res;
@@ -483,80 +492,80 @@ mod tests {
     use super::*;
 
     struct Piecemeal {
-        piece: Vec<Vec<bool>>,
-        piece_flipped: Option<Piece>,
-        piece_rotated: Option<Piece>,
-        piece_encoded: Option<Vec<Vec<u8>>>,
-        piece_permuted: Option<PiecePermuted>,
+        raw_piece: Vec<Vec<bool>>,
+        encoded_placement_flipped: Option<Placement>,
+        encoded_placement_rotated: Option<Placement>,
+        encoded_placement: Option<Placement>,
+        encoded_piece: Option<Piece>,
     }
 
     #[rustfmt::skip]
     fn calendar_pieces() -> Vec<Piecemeal> {
         vec!(
             Piecemeal {
-                piece: vec!(
+                raw_piece: vec!(
                     vec!(1, 1),
                     vec!(1),
                     vec!(1),
                     vec!(1)
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect(),
-                piece_flipped: Some(Piece(vec!(
+                encoded_placement_flipped: Some(Placement(vec!(
                     vec!(0b_1_1101),
                     vec!(0b_1_0101),
                     vec!(0b_1_0101),
                     vec!(0b_1_0011, 0b_1_1110),
                 ))),
-                piece_rotated: Some(Piece(vec!(
+                encoded_placement_rotated: Some(Placement(vec!(
                     vec!(0b_1_1011, 0b_1_1010, 0b_1_1010, 0b_1_1100),
                     vec!(0b_0_0000, 0b_0_0000, 0b_0_0000, 0b_1_0111)
                 ))),
-                piece_encoded: Some(vec!(
+                encoded_placement: Some(Placement(vec!(
                     vec!(0b_1_1001, 0b_1_1110),
                     vec!(0b_1_0101),
                     vec!(0b_1_0101),
                     vec!(0b_1_0111),
-                )),
-                piece_permuted: Some(
-                    PiecePermuted {
+                ))),
+                encoded_piece: Some(
+                    Piece {
                         uid: 1,
-                        piece_permuted: vec!(
-                            Piece(vec!(
+                        placements: vec!(
+                            Placement(vec!(
                                 vec!(0b_0_0000, 0b_0_0000, 0b_0_0000, 0b_1_1101),
                                 vec!(0b_1_1011, 0b_1_1010, 0b_1_1010, 0b_1_0110),
                             )),
-                            Piece(vec!(
+                            Placement(vec!(
                                 vec!(0b_0_0000, 0b_1_1101),
                                 vec!(0b_0_0000, 0b_1_0101),
                                 vec!(0b_0_0000, 0b_1_0101),
                                 vec!(0b_1_1011, 0b_1_0110),
                             )),
-                            Piece(vec!(
+                            Placement(vec!(
                                 vec!(0b_1_1001, 0b_1_1010, 0b_1_1010, 0b_1_1110),
                                 vec!(0b_1_0111, 0b_0_0000, 0b_0_0000, 0b_0_0000),
                             )),
-                            Piece(vec!(
+                            Placement(vec!(
                                 vec!(0b_1_1001, 0b_1_1110),
                                 vec!(0b_1_0101, 0b_0_0000),
                                 vec!(0b_1_0101, 0b_0_0000),
                                 vec!(0b_1_0111, 0b_0_0000),
                             )),
-                            Piece(vec!(
+                            Placement(vec!(
                                 vec!(0b_1_1011, 0b_1_1010, 0b_1_1010, 0b_1_1100),
                                 vec!(0b_0_0000, 0b_0_0000, 0b_0_0000, 0b_1_0111),
                             )),
-                            Piece(vec!(
+                            Placement(vec!(
                                 vec!(0b_1_1011, 0b_1_1100),
                                 vec!(0b_0_0000, 0b_1_0101),
                                 vec!(0b_0_0000, 0b_1_0101),
                                 vec!(0b_0_0000, 0b_1_0111),
                             )),
-                            Piece(vec!(
+                            Placement(vec!(
                                 vec!(0b_1_1101, 0b_0_0000),
                                 vec!(0b_1_0101, 0b_0_0000),
                                 vec!(0b_1_0101, 0b_0_0000),
                                 vec!(0b_1_0011, 0b_1_1110),
                             )),
-                            Piece(vec!(
+                            Placement(vec!(
                                 vec!(0b_1_1101, 0b_0_0000, 0b_0_0000, 0b_0_0000),
                                 vec!(0b_1_0011, 0b_1_1010, 0b_1_1010, 0b_1_1110),
                             )),
@@ -565,51 +574,51 @@ mod tests {
                 ),
             },
             Piecemeal {
-                piece: vec!(
+                raw_piece: vec!(
                     vec!(1, 0),
                     vec!(1, 1),
                     vec!(1),
                     vec!(1, 0)
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect(),
-                piece_flipped: None,
-                piece_rotated: None,
-                piece_encoded: None,
-                piece_permuted: None
+                encoded_placement_flipped: None,
+                encoded_placement_rotated: None,
+                encoded_placement: None,
+                encoded_piece: None
             },
             Piecemeal {
-                piece: vec!(
+                raw_piece: vec!(
                     vec!(1, 0, 1),
                     vec!(1, 1, 1),
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect(),
-                piece_flipped: Some(Piece(vec!(
+                encoded_placement_flipped: Some(Placement(vec!(
                     vec!(0b_1_1001, 0b_1_1010, 0b_1_1100),
                     vec!(0b_1_0111, 0b_0_0000, 0b_1_0111)
                 ))),
-                piece_rotated: Some(Piece(vec!(
+                encoded_placement_rotated: Some(Placement(vec!(
                     vec!(0b_1_1001, 0b_1_1110),
                     vec!(0b_1_0101, 0b_0_0000),
                     vec!(0b_1_0011, 0b_1_1110),
                 ))),
-                piece_encoded: None,
-                piece_permuted: Some(
-                    PiecePermuted { 
+                encoded_placement: None,
+                encoded_piece: Some(
+                    Piece { 
                         uid: (2),
-                        piece_permuted: (vec!(
-                            Piece(vec!(
+                        placements: (vec!(
+                            Placement(vec!(
                                 vec!(0b_1_1001, 0b_1_1010, 0b_1_1100),
                                 vec!(0b_1_0111, 0b_0_0000, 0b_1_0111),
                             )),
-                            Piece(vec!(
+                            Placement(vec!(
                                 vec!(0b_1_1001, 0b_1_1110),
                                 vec!(0b_1_0101, 0b_0_0000),
                                 vec!(0b_1_0011, 0b_1_1110)
                             )),
-                            Piece(vec!(
+                            Placement(vec!(
                                 vec!(0b_1_1011, 0b_1_1100),
                                 vec!(0b_0_0000, 0b_1_0101),
                                 vec!(0b_1_1011, 0b_1_0110)
                             )),
-                            Piece(vec!(
+                            Placement(vec!(
                                 vec!(0b_1_1101, 0b_0_0000, 0b_1_1101),
                                 vec!(0b_1_0011, 0b_1_1010, 0b_1_0110),
                             )),
@@ -618,79 +627,85 @@ mod tests {
                 )
             },
             Piecemeal {
-                piece: vec!(
+                raw_piece: vec!(
                     vec!(0, 0, 1),
                     vec!(1, 1, 1),
                     vec!(1),
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect(),
-                piece_flipped: None,
-                piece_rotated: None,
-                piece_encoded: None,
-                piece_permuted: None
+                encoded_placement_flipped: None,
+                encoded_placement_rotated: None,
+                encoded_placement: None,
+                encoded_piece: None
             },
             Piecemeal {
-                piece: vec!(
+                raw_piece: vec!(
                     vec!(1, 1, 1),
                     vec!(1, 1, 1),
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect(),
-                piece_flipped: None,
-                piece_rotated: None,
-                piece_encoded: None,
-                piece_permuted: None
+                encoded_placement_flipped: None,
+                encoded_placement_rotated: None,
+                encoded_placement: None,
+                encoded_piece: None
             },
             Piecemeal {
-                piece: vec!(
+                raw_piece: vec!(
                     vec!(1, 0, 0),
                     vec!(1),
                     vec!(1, 1, 1),
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect(),
-                piece_flipped: None,
-                piece_rotated: None,
-                piece_encoded: None,
-                piece_permuted: None
+                encoded_placement_flipped: None,
+                encoded_placement_rotated: None,
+                encoded_placement: None,
+                encoded_piece: None
             },
             Piecemeal {
-                piece: vec!(
+                raw_piece: vec!(
                     vec!(0, 0, 1, 1),
                     vec!(1, 1, 1, 0),
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect(),
-                piece_flipped: None,
-                piece_rotated: None,
-                piece_encoded: None,
-                piece_permuted: None
+                encoded_placement_flipped: None,
+                encoded_placement_rotated: None,
+                encoded_placement: None,
+                encoded_piece: None
             },
             Piecemeal {
-                piece: vec!(
+                raw_piece: vec!(
                     vec!(1, 1, 1),
                     vec!(0, 1, 1),
                 ).iter().map(|y| y.iter().map(|x| *x == 1).collect()).collect(),
-                piece_flipped: None,
-                piece_rotated: None,
-                piece_encoded: None,
-                piece_permuted: None
+                encoded_placement_flipped: None,
+                encoded_placement_rotated: None,
+                encoded_placement: None,
+                encoded_piece: None
             }
         )
     }
 
     #[test]
-    fn flips_piece() {
+    fn flips_placement() {
         for piecemeal in calendar_pieces() {
-            if let Some(piece_flipped) = piecemeal.piece_flipped {
+            if let Some(encoded_placement_flipped) = piecemeal.encoded_placement_flipped {
                 assert_eq!(
-                    piece_flipped,
-                    Piece::new(&piecemeal.piece).unwrap().flip().unwrap()
+                    encoded_placement_flipped,
+                    Placement::new(&piecemeal.raw_piece)
+                        .unwrap()
+                        .flip()
+                        .unwrap()
                 );
             }
         }
     }
 
     #[test]
-    fn rotates_piece() {
+    fn rotates_placement() {
         for piecemeal in calendar_pieces() {
-            if let Some(piece_rotated) = piecemeal.piece_rotated {
+            if let Some(encoded_placement_rotated) = piecemeal.encoded_placement_rotated {
                 assert_eq!(
-                    piece_rotated,
-                    Piece::new(&piecemeal.piece).unwrap().rotate().unwrap()
+                    encoded_placement_rotated,
+                    Placement::new(&piecemeal.raw_piece)
+                        .unwrap()
+                        .rotate()
+                        .unwrap()
                 );
             }
         }
@@ -699,29 +714,33 @@ mod tests {
     #[test]
     fn encodes_piece() {
         for piecemeal in calendar_pieces() {
-            if let Some(piece_encoded) = piecemeal.piece_encoded {
-                assert_eq!(piece_encoded, Piece::new(&piecemeal.piece).unwrap().0);
+            if let Some(encoded_placement) = piecemeal.encoded_placement {
+                assert_eq!(
+                    encoded_placement,
+                    Placement::new(&piecemeal.raw_piece).unwrap()
+                );
             }
         }
     }
 
     #[test]
-    fn permutes_pieces() {
-        // collect pieces from calendar_pieces where piece_permuted is defined
+    fn collects_hand() {
+        // collect hand from calendar_pieces where placements is defined
         let pieces: Vec<Vec<Vec<bool>>> = calendar_pieces()
             .iter()
-            .filter(|piecemeal| piecemeal.piece_permuted.is_some())
-            .map(|piecemeal| piecemeal.piece.clone())
+            .filter(|piecemeal| piecemeal.encoded_piece.is_some())
+            .map(|piecemeal| piecemeal.raw_piece.clone())
             .collect();
 
         // permute pieces
-        let pieces_permuted = permute_pieces(&pieces).expect("Pieces should be permutable");
+        let hand = Hand::new(&pieces)
+            .expect("Should be able to generate hand from calendar puzzle pieces");
 
         // collect pieces_permuted from calendar_pieces
-        let mut expected_pieces_permuted: Vec<PiecePermuted> = calendar_pieces()
+        let mut expected_pieces_permuted: Vec<Piece> = calendar_pieces()
             .iter()
-            .filter(|piecemeal| piecemeal.piece_permuted.is_some())
-            .map(|piecemeal| piecemeal.piece_permuted.clone().unwrap())
+            .filter(|piecemeal| piecemeal.encoded_piece.is_some())
+            .map(|piecemeal| piecemeal.encoded_piece.clone().unwrap())
             .collect();
 
         // populate uid for expected permuted pieces
@@ -730,12 +749,12 @@ mod tests {
         }
 
         // validate
-        for (index, piece_permuted) in pieces_permuted.iter().enumerate() {
+        for (index, piece) in hand.pieces.iter().enumerate() {
             assert_eq!(
                 *expected_pieces_permuted
                     .get(index)
                     .expect("Number of expected pieces should equal the number of permuted pieces"),
-                *piece_permuted
+                *piece
             );
         }
     }
@@ -749,12 +768,14 @@ mod tests {
         // o o c        o x c
         // o c c        o x c
 
-        // collect permuted pieces
-        let pieces_permuted: Vec<PiecePermuted> = calendar_pieces()
-            .into_iter()
-            .filter(|p| p.piece_permuted.is_some())
-            .map(|p| p.piece_permuted.unwrap())
-            .collect();
+        // collect pieces into hand
+        let hand = Hand {
+            pieces: calendar_pieces()
+                .into_iter()
+                .filter(|p| p.encoded_piece.is_some())
+                .map(|p| p.encoded_piece.unwrap())
+                .collect(),
+        };
 
         // board encoding scheme: {3b': piece_used, 1b': is_board, 1'b: is_open, 4b': neighbors}
         let board = Board(vec![
@@ -771,7 +792,7 @@ mod tests {
         ]);
 
         // attempt piece placement
-        let board = attempt_move(board, pieces_permuted, false).expect("Failed to attempt move");
+        let board = attempt_move(board, hand, false).expect("Failed to attempt move");
         assert_eq!(expected_board.0, board.0);
     }
 
@@ -801,7 +822,7 @@ mod tests {
         // collect calendar pieces
         let pieces: Vec<Vec<Vec<bool>>> = calendar_pieces()
             .iter()
-            .map(|piecemeal| piecemeal.piece.clone())
+            .map(|piecemeal| piecemeal.raw_piece.clone())
             .collect();
 
         // solve puzzle
@@ -814,7 +835,7 @@ mod tests {
         // collect calendar pieces
         let pieces: Vec<Vec<Vec<bool>>> = calendar_pieces()
             .iter()
-            .map(|piecemeal| piecemeal.piece.clone())
+            .map(|piecemeal| piecemeal.raw_piece.clone())
             .collect();
 
         // iterate through all possible month, day combinations
