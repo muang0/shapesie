@@ -1,7 +1,7 @@
 [package]
 name = "shapesie"
 description = "Solve 2-dimensional shape placement puzzles"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
