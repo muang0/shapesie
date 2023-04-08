@@ -1,9 +1,6 @@
 use std::fmt;
 
-// TODO implement board/piece public interface
-// TODO support puzzles where unfilled spaces in solution is acceptable
-// TODO perf metric based on cpu time
-
+/// A type that represents errors that could be encountered when solving a placement puzzle
 #[derive(Debug)]
 pub enum Error {
     NoSolutionFound,
@@ -14,9 +11,13 @@ pub enum Error {
     PieceTooWide,
 }
 
-pub struct Board(Vec<Vec<u16>>);
+/// A type that represents a game board where puzzle pieces can be placed
+#[derive(Clone)]
+pub struct Board(
+    /// Serialization: {8b': uid, 1b': is_board, 1'b: is_open, 4b': neighbors}
+    pub Vec<Vec<u16>>,
+);
 
-// board serialization: {3b': uid, 1b': is_board, 1'b: is_open, 4b': neighbors}
 impl fmt::Binary for Board {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         println!();
@@ -58,36 +59,19 @@ impl fmt::Display for Board {
 }
 
 impl Board {
-    fn new(board: &Vec<Vec<bool>>) -> Result<Self, Error> {
+    /// Validates that the board meets solvability constraints
+    pub fn validate_board(&self) -> Result<(), Error> {
         // upper bound on width/height is half of usize::MAX due to design decision of converting usize->isize when calculating neighbors (this allows us to stay DRY and loop through offset tuple array).  Potentially revisit this in the future.
         let board_width_bound = (usize::MAX / 2) - 1;
-        if board.len() >= board_width_bound {
+        if self.0.len() >= board_width_bound {
             return Err(Error::BoardTooTall);
         }
-        for x_arr in board.iter() {
+        for x_arr in self.0.iter() {
             if x_arr.len() >= board_width_bound {
                 return Err(Error::BoardTooWide);
             }
         }
-        let mut board = Board(
-            board
-                .iter()
-                .map(|x_arr| {
-                    x_arr
-                        .iter()
-                        .map(|square| {
-                            if *square {
-                                0b_000_1_1_0000
-                            } else {
-                                0b_000_0_0_0000
-                            }
-                        })
-                        .collect()
-                })
-                .collect(),
-        );
-        board.initialize_neighbors();
-        Ok(board)
+        Ok(())
     }
 
     // calculates 'neighbors' serialized field for each square on the board
@@ -173,40 +157,27 @@ impl Board {
     }
 }
 
+/// A type that represents a particular orientation of a piece
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct Placement(Vec<Vec<u8>>);
+pub struct Placement(
+    /// Serialization : {1b': is_piece, 4b': neighbors}
+    pub Vec<Vec<u8>>,
+);
 
 impl Placement {
-    fn new(raw_placement: &Vec<Vec<bool>>) -> Result<Placement, Error> {
+    /// Validates the placement meets usability constraints
+    pub fn validate(&self) -> Result<(), Error> {
         // upper bound on width/height is half of usize::MAX due to design decision of converting usize->isize when calculating neighbors (this allows us to loop through offset tuple array).  Potentially revisit this in the future.
         let piece_width_bound = (usize::MAX / 2) - 1;
-        if raw_placement.len() >= piece_width_bound {
+        if self.0.len() >= piece_width_bound {
             return Err(Error::PieceTooTall);
         }
-        for x_arr in raw_placement.iter() {
+        for x_arr in self.0.iter() {
             if x_arr.len() >= piece_width_bound {
                 return Err(Error::PieceTooWide);
             }
         }
-        let mut encoded_placement = Placement(
-            raw_placement
-                .iter()
-                .map(|x_arr| {
-                    x_arr
-                        .iter()
-                        .map(|is_piece| {
-                            if *is_piece {
-                                return 0b_1_0000;
-                            } else {
-                                return 0b_0_0000;
-                            }
-                        })
-                        .collect()
-                })
-                .collect(),
-        );
-        encoded_placement.initialize_neighbors();
-        Ok(encoded_placement)
+        Ok(())
     }
 
     // copies and flips a placement
@@ -222,7 +193,7 @@ impl Placement {
                     .collect()
             })
             .collect();
-        Placement::new(&piece)
+        piece.to_placement()
     }
 
     // copies and rotates a placement (90 degrees clockwise)
@@ -235,7 +206,7 @@ impl Placement {
                 }
             }
         }
-        Placement::new(&rotated_placement)
+        rotated_placement.to_placement()
     }
 
     // calculates 'neighbors' serialized field for each square on the piece vector
@@ -277,7 +248,6 @@ impl Placement {
     }
 }
 
-// piece serialization : {1b': is_piece, 4b': neighbors}
 impl fmt::Binary for Placement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         println!();
@@ -293,25 +263,108 @@ impl fmt::Binary for Placement {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-struct Piece {
-    uid: u8,                    // used for identifying the piece once placed on the board
-    placements: Vec<Placement>, // all possible unique orientations of the piece
+/// A trait for converting a value into a `Placement`
+pub trait ToPlacement {
+    fn to_placement(self) -> Result<Placement, Error>;
 }
 
+impl ToPlacement for &Vec<Vec<bool>> {
+    fn to_placement(self) -> Result<Placement, Error> {
+        let mut encoded_placement = Placement(
+            self.iter()
+                .map(|x_arr| {
+                    x_arr
+                        .iter()
+                        .map(|is_piece| {
+                            if *is_piece {
+                                return 0b_1_0000;
+                            } else {
+                                return 0b_0_0000;
+                            }
+                        })
+                        .collect()
+                })
+                .collect(),
+        );
+        encoded_placement.initialize_neighbors();
+        encoded_placement.validate()?;
+        Ok(encoded_placement)
+    }
+}
+
+/// A type that represents all `Placements` of a given piece
+#[derive(Clone, Debug, PartialEq)]
+pub struct Piece {
+    pub uid: u8,                    // used for identifying the piece once placed on the board
+    pub placements: Vec<Placement>, // all possible unique orientations of the piece
+}
+
+/// A type that represents all `Pieces` to be placed
 #[derive(Clone)]
-struct Hand {
-    pieces: Vec<Piece>,
+pub struct Hand {
+    pub pieces: Vec<Piece>,
+}
+
+/// A trait for converting a value into a `Board`
+pub trait ToBoard {
+    fn to_board(self) -> Result<Board, Error>;
+}
+
+impl ToBoard for &Vec<Vec<bool>> {
+    fn to_board(self) -> Result<Board, Error> {
+        let mut board = Board(
+            self.iter()
+                .map(|x_arr| {
+                    x_arr
+                        .iter()
+                        .map(|square| {
+                            if *square {
+                                0b_000_1_1_0000
+                            } else {
+                                0b_000_0_0_0000
+                            }
+                        })
+                        .collect()
+                })
+                .collect(),
+        );
+        board.initialize_neighbors();
+        board.validate_board()?;
+        Ok(board)
+    }
+}
+
+impl ToBoard for Board {
+    fn to_board(self) -> Result<Board, Error> {
+        Ok(self.clone())
+    }
 }
 
 impl Hand {
-    fn new(raw_pieces: &Vec<Vec<Vec<bool>>>) -> Result<Self, Error> {
-        if raw_pieces.len() > (2 ^ 8) {
+    pub fn validate(&self) -> Result<(), Error> {
+        if self.pieces.len() > (2 ^ 8) {
             return Err(Error::TooManyPieces);
         }
+        Ok(())
+    }
+
+    fn remove_piece_by_uid(&mut self, uid: u8) {
+        if let Some(piece_index) = self.pieces.iter().position(|piece| piece.uid == uid) {
+            self.pieces.remove(piece_index);
+        }
+    }
+}
+
+/// A trait for converting a value into a `Hand`
+pub trait ToHand {
+    fn to_hand(self) -> Result<Hand, Error>;
+}
+
+impl ToHand for &Vec<Vec<Vec<bool>>> {
+    fn to_hand(self) -> Result<Hand, Error> {
         let mut hand = Hand { pieces: vec![] };
         // loop through pieces
-        for (index, raw_piece) in raw_pieces.clone().iter_mut().enumerate() {
+        for (index, raw_piece) in self.clone().iter_mut().enumerate() {
             // zero extend rows to uniform length
             match raw_piece.iter().map(|x_arr| x_arr.len()).max() {
                 Some(row_length) => raw_piece
@@ -328,8 +381,8 @@ impl Hand {
                 uid: uid_result.unwrap(),
                 placements: Vec::new(),
             };
-            encoded_piece.placements.push(Placement::new(&raw_piece)?);
-            let mut rotated_placement = Placement::new(&raw_piece)?;
+            encoded_piece.placements.push(raw_piece.to_placement()?);
+            let mut rotated_placement = raw_piece.to_placement()?;
             for _ in 0..3 {
                 rotated_placement = rotated_placement.rotate()?;
                 encoded_piece.placements.push(rotated_placement.clone())
@@ -337,8 +390,8 @@ impl Hand {
             // flip piece, then rotate & encode 4x
             encoded_piece
                 .placements
-                .push(Placement::new(&raw_piece)?.flip()?);
-            let mut flipped_rotated_placement = Placement::new(&raw_piece)?.flip()?;
+                .push(raw_piece.to_placement()?.flip()?);
+            let mut flipped_rotated_placement = raw_piece.to_placement()?.flip()?;
             for _ in 0..3 {
                 flipped_rotated_placement = flipped_rotated_placement.rotate()?;
                 encoded_piece
@@ -350,20 +403,16 @@ impl Hand {
             encoded_piece.placements.dedup();
             hand.pieces.push(encoded_piece)
         }
+        hand.validate()?;
         Ok(hand)
-    }
-
-    fn remove_piece_by_uid(&mut self, uid: u8) {
-        if let Some(piece_index) = self.pieces.iter().position(|piece| piece.uid == uid) {
-            self.pieces.remove(piece_index);
-        }
     }
 }
 
-// solve the puzzle by attempting to place all pieces onto the board (non-overlapping)
-pub fn solve_puzzle(board: &Vec<Vec<bool>>, pieces: &Vec<Vec<Vec<bool>>>) -> Result<Board, Error> {
-    let hand = Hand::new(pieces)?;
-    let board = Board::new(board)?;
+/// solve the puzzle by attempting to place all `Pieces` onto the board in a non-overlapping manner.
+/// Currently this function only supports puzzles that fit all `Pieces`, with no spaces left open.
+pub fn solve_puzzle<T: ToBoard, Y: ToHand>(board: T, hand: Y) -> Result<Board, Error> {
+    let hand = <Y as ToHand>::to_hand(hand)?;
+    let board = <T as ToBoard>::to_board(board)?;
     return attempt_move(board, hand, true);
 }
 
@@ -687,10 +736,7 @@ mod tests {
             if let Some(encoded_placement_flipped) = piecemeal.encoded_placement_flipped {
                 assert_eq!(
                     encoded_placement_flipped,
-                    Placement::new(&piecemeal.raw_piece)
-                        .unwrap()
-                        .flip()
-                        .unwrap()
+                    piecemeal.raw_piece.to_placement().unwrap().flip().unwrap()
                 );
             }
         }
@@ -702,7 +748,9 @@ mod tests {
             if let Some(encoded_placement_rotated) = piecemeal.encoded_placement_rotated {
                 assert_eq!(
                     encoded_placement_rotated,
-                    Placement::new(&piecemeal.raw_piece)
+                    piecemeal
+                        .raw_piece
+                        .to_placement()
                         .unwrap()
                         .rotate()
                         .unwrap()
@@ -717,7 +765,7 @@ mod tests {
             if let Some(encoded_placement) = piecemeal.encoded_placement {
                 assert_eq!(
                     encoded_placement,
-                    Placement::new(&piecemeal.raw_piece).unwrap()
+                    piecemeal.raw_piece.to_placement().unwrap()
                 );
             }
         }
@@ -733,7 +781,8 @@ mod tests {
             .collect();
 
         // permute pieces
-        let hand = Hand::new(&pieces)
+        let hand = &pieces
+            .to_hand()
             .expect("Should be able to generate hand from calendar puzzle pieces");
 
         // collect pieces_permuted from calendar_pieces
