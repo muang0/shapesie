@@ -4,15 +4,16 @@ use std::fmt;
 #[derive(Debug)]
 pub enum Error {
     NoSolutionFound,
-    TooManyPieces,
+    NoTargetSpaceFound,
     BoardTooTall,
     BoardTooWide,
     PieceTooTall,
     PieceTooWide,
+    TooManyPieces,
 }
 
 /// A type that represents a game board where puzzle pieces can be placed
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Board(
     /// Serialization: {8b': uid, 1b': is_board, 1'b: is_open, 4b': neighbors}
     pub Vec<Vec<u16>>,
@@ -61,6 +62,21 @@ impl fmt::Display for Board {
 impl Board {
     /// Validates that the board meets solvability constraints
     pub fn validate_board(&self) -> Result<(), Error> {
+        // upper bound on width/height is half of usize::MAX due to design decision of converting usize->isize when calculating neighbors (this allows us to stay DRY and loop through offset tuple array).  Potentially revisit this in the future.
+        let board_width_bound = (usize::MAX / 2) - 1;
+        if self.0.len() >= board_width_bound {
+            return Err(Error::BoardTooTall);
+        }
+        for x_arr in self.0.iter() {
+            if x_arr.len() >= board_width_bound {
+                return Err(Error::BoardTooWide);
+            }
+        }
+        Ok(())
+    }
+
+    // support both 'validate' & 'validate_board' to avoid a wasteful major release.
+    pub fn validate(&self) -> Result<(), Error> {
         // upper bound on width/height is half of usize::MAX due to design decision of converting usize->isize when calculating neighbors (this allows us to stay DRY and loop through offset tuple array).  Potentially revisit this in the future.
         let board_width_bound = (usize::MAX / 2) - 1;
         if self.0.len() >= board_width_bound {
@@ -329,14 +345,8 @@ impl ToBoard for &Vec<Vec<bool>> {
                 .collect(),
         );
         board.initialize_neighbors();
-        board.validate_board()?;
+        board.validate()?;
         Ok(board)
-    }
-}
-
-impl ToBoard for Board {
-    fn to_board(self) -> Result<Board, Error> {
-        Ok(self.clone())
     }
 }
 
@@ -409,24 +419,24 @@ impl ToHand for &Vec<Vec<Vec<bool>>> {
 }
 
 /// solve the puzzle by attempting to place all `Pieces` onto the board in a non-overlapping manner.
-/// Currently this function only supports puzzles that fit all `Pieces`, with no spaces left open.
 pub fn solve_puzzle<T: ToBoard, Y: ToHand>(board: T, hand: Y) -> Result<Board, Error> {
     let hand = <Y as ToHand>::to_hand(hand)?;
-    let board = <T as ToBoard>::to_board(board)?;
-    return attempt_move(board, hand, true);
+    let board: Board = <T as ToBoard>::to_board(board)?;
+    // recursively attempt moves until solution is found or search space has been exhausted
+    return attempt_move(&board, &hand, true);
 }
 
-// recursively attempt piece placements until solution is found or search space has been exhausted
-fn attempt_move(board: Board, hand: Hand, should_recurse: bool) -> Result<Board, Error> {
-    // find target space for attempting piece placement
-    // target space should be the first 'most restricted' space
+// for a given board, generate a list of the most restricted spaces
+fn find_target_spaces(board: &Board) -> Result<Vec<(usize, usize)>, Error> {
+    // find target spaces for attempting piece placement
     // order of search is: 4-walled spaces (islands), 3-walled spaces (nooks), 2-walled spaces (corners)
     let target_space_criteria: Vec<Vec<u16>> = vec![
         vec![0b1111],                         // island
         vec![0b0111, 0b1011, 0b1101, 0b1110], // nooks
         vec![0b0011, 0b1001, 0b1100, 0b0110], // corners
+        vec![0b0001, 0b0010, 0b0100, 0b1000], // edges
     ];
-    let mut target_space: Option<(usize, usize)> = None;
+    let mut target_spaces: Vec<(usize, usize)> = vec![];
     for criteria in target_space_criteria.iter() {
         if let Some(target_space_indexes) =
             board.0.iter().enumerate().find_map(|(y_index, x_vec)| {
@@ -443,14 +453,24 @@ fn attempt_move(board: Board, hand: Hand, should_recurse: bool) -> Result<Board,
                 })
             })
         {
-            target_space = Some(target_space_indexes);
-            break;
+            if !target_spaces.contains(&target_space_indexes) {
+                let mut target_space_index: Vec<(usize, usize)> = vec![target_space_indexes];
+                target_spaces.append(&mut target_space_index);
+            }
         }
     }
+    if target_spaces.len() == 0 {
+        return Err(Error::NoTargetSpaceFound);
+    }
+    Ok(target_spaces)
+}
 
-    // find a piece that has a valid anchor point (⚓️ the piece onto the board by finding a square on the piece that fits the target space without any neighbor conflicts)
-    if let Some((y_index_board, x_index_board)) = target_space {
-        // for each piece
+fn attempt_move(board: &Board, hand: &Hand, should_recurse: bool) -> Result<Board, Error> {
+    // find target_spaces
+    for (y_index_board, x_index_board) in find_target_spaces(board).unwrap() { // TODO: solve more elegantly than unwrap
+        // find a piece that has a valid anchor point (⚓️ the piece onto the board by finding a square on the piece that fits the target space without any neighbor conflicts)
+        let mut updated_hand: Hand;
+        let mut updated_board: Board;
         for piece in hand.pieces.iter() {
             // for each possible orientation of a given piece
             for placement in piece.placements.iter() {
@@ -486,13 +506,12 @@ fn attempt_move(board: Board, hand: Hand, should_recurse: bool) -> Result<Board,
                             ));
                             // if the placement fits, update the board accordingly
                             if !piece_is_blocked {
-                                let mut updated_board = Board(board.0.clone());
+                                updated_board = Board(board.0.clone());
                                 for (y_index_piece, x_arr2) in placement.0.iter().enumerate() {
                                     for (x_index_piece, piece_space) in x_arr2.iter().enumerate() {
                                         if piece_space & 0b_1_0000 == 0b_1_0000 {
                                             // don't have to worry about subraction overflow here since already checked above
-                                            let target_y_index = y_index_board + y_index_piece
-                                                - y_index_piece_anchor;
+                                            let target_y_index = y_index_board + y_index_piece - y_index_piece_anchor;
                                             if let Some(x_arr3) =
                                                 updated_board.0.get_mut(target_y_index)
                                             {
@@ -513,15 +532,14 @@ fn attempt_move(board: Board, hand: Hand, should_recurse: bool) -> Result<Board,
                                         }
                                     }
                                 }
-                                let mut updated_hand = hand.clone();
+                                updated_hand = hand.clone();
                                 updated_hand.remove_piece_by_uid(piece.uid);
                                 // return updated board if all pieces have been used (or if recursion is disabled)
                                 if updated_hand.pieces.len() == 0 || !should_recurse {
                                     return Ok(updated_board);
                                 }
                                 // recursively attempt moves
-                                let move_res =
-                                    attempt_move(updated_board, updated_hand, should_recurse);
+                                let move_res = attempt_move(&updated_board, &updated_hand, should_recurse);
                                 // return if puzzle has been solved
                                 if move_res.is_ok() {
                                     return move_res;
@@ -815,7 +833,7 @@ mod tests {
         // o o o        o x x
         // o o c   ->   o x c
         // o o c        o x c
-        // o c c        o x c
+        // o o c        o x c
 
         // collect pieces into hand
         let hand = Hand {
@@ -841,8 +859,8 @@ mod tests {
         ]);
 
         // attempt piece placement
-        let board = attempt_move(board, hand, false).expect("Failed to attempt move");
-        assert_eq!(expected_board.0, board.0);
+        let board: Board = attempt_move(&board, &hand, false).expect("Failed to attempt move");
+        assert_eq!(expected_board, board);
     }
 
     #[test]#[rustfmt::skip]
@@ -875,7 +893,8 @@ mod tests {
             .collect();
 
         // solve puzzle
-        let res = solve_puzzle(&board, &pieces).expect("Failed to solve puzzle");        
+        let res = solve_puzzle(&board, &pieces).expect("Failed to solve puzzle");
+        // print!("{}", res);
         assert_eq!(expected_board.0, res.0);
     }
 
@@ -929,5 +948,36 @@ mod tests {
                 solve_puzzle(&board, &pieces).expect("Unable to solve puzzle");
             }
         }
+    }
+
+    #[test]
+    fn solves_imperfect_puzzle() {
+        // custom piece for testing
+        // against open-square solutions exist
+        let pieces: Vec<Vec<Vec<bool>>> = vec![
+            vec![
+                vec![true, true, true],
+                vec![true, true, true],
+                vec![true, true, true]
+            ],
+            vec![
+                vec![true, true, true],
+                vec![true, true, true],
+                vec![false, false, false]
+            ]
+        ];
+
+        // iterate through all possible month, day combinations
+        // define board
+        #[rustfmt::skip]
+        let board: Vec<Vec<bool>> = vec![
+            vec![1, 1, 1, 1, 1, 1],
+            vec![1, 1, 1, 1, 1, 1],
+            vec![1, 1, 1, 1, 1, 1]
+        ].iter()
+        .map(|y| y.iter().map(|x| *x == 1).collect())
+        .collect();
+
+        solve_puzzle(&board, &pieces).expect("Unable to solve puzzle");
     }
 }
