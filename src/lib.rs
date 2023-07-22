@@ -419,15 +419,15 @@ impl ToHand for &Vec<Vec<Vec<bool>>> {
 }
 
 /// solve the puzzle by attempting to place all `Pieces` onto the board in a non-overlapping manner.
-pub fn solve_puzzle<T: ToBoard, Y: ToHand>(board: T, hand: Y) -> Result<Board, Error> {
+pub fn solve_puzzle<T: ToBoard, Y: ToHand>(board: T, hand: Y, is_perfect_puzzle: bool) -> Result<Board, Error> {
     let hand = <Y as ToHand>::to_hand(hand)?;
     let board: Board = <T as ToBoard>::to_board(board)?;
     // recursively attempt moves until solution is found or search space has been exhausted
-    return attempt_move(&board, &hand, true);
+    return attempt_move(&board, &hand, true, is_perfect_puzzle);
 }
 
 // for a given board, generate a list of the most restricted spaces
-fn find_target_spaces(board: &Board) -> Result<Vec<(usize, usize)>, Error> {
+fn find_target_spaces(board: &Board, iteration: u8) -> Result<Vec<(usize, usize)>, Error> {
     // find target spaces for attempting piece placement
     // order of search is: 4-walled spaces (islands), 3-walled spaces (nooks), 2-walled spaces (corners)
     let target_space_criteria: Vec<Vec<u16>> = vec![
@@ -438,6 +438,7 @@ fn find_target_spaces(board: &Board) -> Result<Vec<(usize, usize)>, Error> {
     ];
     let mut target_spaces: Vec<(usize, usize)> = vec![];
     for criteria in target_space_criteria.iter() {
+        let mut target_space_counter = 0;
         if let Some(target_space_indexes) =
             board.0.iter().enumerate().find_map(|(y_index, x_vec)| {
                 x_vec.iter().enumerate().find_map(|(x_index, space)| {
@@ -446,7 +447,13 @@ fn find_target_spaces(board: &Board) -> Result<Vec<(usize, usize)>, Error> {
                         if space & (neighbor_encoding | 0b_1_1_0000)
                             == (neighbor_encoding | 0b_1_1_0000)
                         {
-                            return Some((y_index, x_index));
+                            // only add the target space to the list if it's the nth one found
+                            // this strategy is taken so we can greater expand the scope of nonperfect puzzle coverage
+                            if target_space_counter == iteration {
+                                return Some((y_index, x_index));
+                            } else {
+                                target_space_counter += 1;
+                            }
                         }
                     }
                     None
@@ -465,84 +472,87 @@ fn find_target_spaces(board: &Board) -> Result<Vec<(usize, usize)>, Error> {
     Ok(target_spaces)
 }
 
-fn attempt_move(board: &Board, hand: &Hand, should_recurse: bool) -> Result<Board, Error> {
+fn attempt_move(board: &Board, hand: &Hand, should_recurse: bool, is_perfect_puzzle: bool) -> Result<Board, Error> {
     // find target_spaces
-    for (y_index_board, x_index_board) in find_target_spaces(board).unwrap() { // TODO: solve more elegantly than unwrap
-        // find a piece that has a valid anchor point (⚓️ the piece onto the board by finding a square on the piece that fits the target space without any neighbor conflicts)
-        let mut updated_hand: Hand;
-        let mut updated_board: Board;
-        for piece in hand.pieces.iter() {
-            // for each possible orientation of a given piece
-            for placement in piece.placements.iter() {
-                // 👀 through the placement squares for an ⚓️ point
-                for (y_index_piece_anchor, x_arr) in placement.0.iter().enumerate() {
-                    for (x_index_piece_anchor, piece_space_anchor) in x_arr.iter().enumerate() {
-                        // placement ⚓️ should fit onto the board's target space without any neighbor/wall conflicts
-                        if piece_space_anchor & 0b_1_0000 == 0b_1_0000
-                            && u16::from(*piece_space_anchor)
-                                & (board.0[y_index_board][x_index_board] & 0b_1111)
-                                == (board.0[y_index_board][x_index_board] & 0b_1111)
-                        {
-                            // determine if placement is a valid move (given fixed board target space & placement ⚓️)
-                            let piece_is_blocked = placement.0.iter().enumerate().any(|(y_index_piece, x_arr2)| x_arr2.iter().enumerate().any(|(x_index_piece, piece_space)|
-                                // check if placement vector item corresponds to a placement square
-                                if piece_space & 0b_1_0000 == 0b_1_0000 {
-                                    // check if associated board square is open
-                                    let target_y_index_opt = (y_index_board + y_index_piece).checked_sub(y_index_piece_anchor);
-                                    if let Some(target_y_index) = target_y_index_opt {
-                                        if let Some(x_arr2) = board.0.get(target_y_index) {
-                                            let target_x_index_opt = (x_index_board + x_index_piece).checked_sub(x_index_piece_anchor);
-                                            if let Some(target_x_index) = target_x_index_opt {
-                                                if let Some(board_square) = x_arr2.get(target_x_index) {
-                                                    // board vector item should be 'on the board' & open to constitute a valid overlay
-                                                    if board_square & 0b_1_1_0000 != 0b_1_1_0000 {
-                                                        return true
-                                                    } else { return false }
+    let recursion_iteration_ceil = if is_perfect_puzzle { 0 } else { 6 };   // TODO: bump setting this numeric var to the outermost function. If we know the puzzle is an imperfect solution, we can iteratively attempt to solve it using increasing values for 'recursion_iteration_ceil' (rather than taking the performance hit in setting this to 6 up-front)
+    for recursion_iteration in 0..=recursion_iteration_ceil {
+        for (y_index_board, x_index_board) in find_target_spaces(board, recursion_iteration).unwrap() { // TODO: solve more elegantly than unwrap
+            // find a piece that has a valid anchor point (⚓️ the piece onto the board by finding a square on the piece that fits the target space without any neighbor conflicts)
+            let mut updated_hand: Hand;
+            let mut updated_board: Board;
+            for piece in hand.pieces.iter() {
+                // for each possible orientation of a given piece
+                for placement in piece.placements.iter() {
+                    // 👀 through the placement squares for an ⚓️ point
+                    for (y_index_piece_anchor, x_arr) in placement.0.iter().enumerate() {
+                        for (x_index_piece_anchor, piece_space_anchor) in x_arr.iter().enumerate() {
+                            // placement ⚓️ should fit onto the board's target space without any neighbor/wall conflicts
+                            if piece_space_anchor & 0b_1_0000 == 0b_1_0000
+                                && u16::from(*piece_space_anchor)
+                                    & (board.0[y_index_board][x_index_board] & 0b_1111)
+                                    == (board.0[y_index_board][x_index_board] & 0b_1111)
+                            {
+                                // determine if placement is a valid move (given fixed board target space & placement ⚓️)
+                                let piece_is_blocked = placement.0.iter().enumerate().any(|(y_index_piece, x_arr2)| x_arr2.iter().enumerate().any(|(x_index_piece, piece_space)|
+                                    // check if placement vector item corresponds to a placement square
+                                    if piece_space & 0b_1_0000 == 0b_1_0000 {
+                                        // check if associated board square is open
+                                        let target_y_index_opt = (y_index_board + y_index_piece).checked_sub(y_index_piece_anchor);
+                                        if let Some(target_y_index) = target_y_index_opt {
+                                            if let Some(x_arr2) = board.0.get(target_y_index) {
+                                                let target_x_index_opt = (x_index_board + x_index_piece).checked_sub(x_index_piece_anchor);
+                                                if let Some(target_x_index) = target_x_index_opt {
+                                                    if let Some(board_square) = x_arr2.get(target_x_index) {
+                                                        // board vector item should be 'on the board' & open to constitute a valid overlay
+                                                        if board_square & 0b_1_1_0000 != 0b_1_1_0000 {
+                                                            return true
+                                                        } else { return false }
+                                                    } else { return true }
                                                 } else { return true }
                                             } else { return true }
                                         } else { return true }
-                                    } else { return true }
-                                } else { return false }  // placement vector item is an empty space, which is always a valid overlay
-                            ));
-                            // if the placement fits, update the board accordingly
-                            if !piece_is_blocked {
-                                updated_board = Board(board.0.clone());
-                                for (y_index_piece, x_arr2) in placement.0.iter().enumerate() {
-                                    for (x_index_piece, piece_space) in x_arr2.iter().enumerate() {
-                                        if piece_space & 0b_1_0000 == 0b_1_0000 {
-                                            // don't have to worry about subraction overflow here since already checked above
-                                            let target_y_index = y_index_board + y_index_piece - y_index_piece_anchor;
-                                            if let Some(x_arr3) =
-                                                updated_board.0.get_mut(target_y_index)
-                                            {
-                                                let target_x_index = x_index_board + x_index_piece
-                                                    - x_index_piece_anchor;
-                                                if let Some(board_square) =
-                                                    x_arr3.get_mut(target_x_index)
+                                    } else { return false }  // placement vector item is an empty space, which is always a valid overlay
+                                ));
+                                // if the placement fits, update the board accordingly
+                                if !piece_is_blocked {
+                                    updated_board = Board(board.0.clone());
+                                    for (y_index_piece, x_arr2) in placement.0.iter().enumerate() {
+                                        for (x_index_piece, piece_space) in x_arr2.iter().enumerate() {
+                                            if piece_space & 0b_1_0000 == 0b_1_0000 {
+                                                // don't have to worry about subraction overflow here since already checked above
+                                                let target_y_index = y_index_board + y_index_piece - y_index_piece_anchor;
+                                                if let Some(x_arr3) =
+                                                    updated_board.0.get_mut(target_y_index)
                                                 {
-                                                    // serialize board square as taken by given piece uid
-                                                    *board_square = (*board_square & 0b_1_0_1111)
-                                                        | u16::from(piece.uid) << 6;
-                                                    updated_board.update_local_neighbors(
-                                                        target_y_index,
-                                                        target_x_index,
-                                                    );
+                                                    let target_x_index = x_index_board + x_index_piece
+                                                        - x_index_piece_anchor;
+                                                    if let Some(board_square) =
+                                                        x_arr3.get_mut(target_x_index)
+                                                    {
+                                                        // serialize board square as taken by given piece uid
+                                                        *board_square = (*board_square & 0b_1_0_1111)
+                                                            | u16::from(piece.uid) << 6;
+                                                        updated_board.update_local_neighbors(
+                                                            target_y_index,
+                                                            target_x_index,
+                                                        );
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                }
-                                updated_hand = hand.clone();
-                                updated_hand.remove_piece_by_uid(piece.uid);
-                                // return updated board if all pieces have been used (or if recursion is disabled)
-                                if updated_hand.pieces.len() == 0 || !should_recurse {
-                                    return Ok(updated_board);
-                                }
-                                // recursively attempt moves
-                                let move_res = attempt_move(&updated_board, &updated_hand, should_recurse);
-                                // return if puzzle has been solved
-                                if move_res.is_ok() {
-                                    return move_res;
+                                    updated_hand = hand.clone();
+                                    updated_hand.remove_piece_by_uid(piece.uid);
+                                    // return updated board if all pieces have been used (or if recursion is disabled)
+                                    if updated_hand.pieces.len() == 0 || !should_recurse {
+                                        return Ok(updated_board);
+                                    }
+                                    // recursively attempt moves
+                                    let move_res = attempt_move(&updated_board, &updated_hand, should_recurse, is_perfect_puzzle);
+                                    // return if puzzle has been solved
+                                    if move_res.is_ok() {
+                                        return move_res;
+                                    }
                                 }
                             }
                         }
@@ -859,7 +869,7 @@ mod tests {
         ]);
 
         // attempt piece placement
-        let board: Board = attempt_move(&board, &hand, false).expect("Failed to attempt move");
+        let board: Board = attempt_move(&board, &hand, false, true).expect("Failed to attempt move");
         assert_eq!(expected_board, board);
     }
 
@@ -893,7 +903,7 @@ mod tests {
             .collect();
 
         // solve puzzle
-        let res = solve_puzzle(&board, &pieces).expect("Failed to solve puzzle");
+        let res = solve_puzzle(&board, &pieces, true).expect("Failed to solve puzzle");
         // print!("{}", res);
         assert_eq!(expected_board.0, res.0);
     }
@@ -945,29 +955,27 @@ mod tests {
                 *day_square = false;
 
                 // solve puzzle
-                solve_puzzle(&board, &pieces).expect("Unable to solve puzzle");
+                solve_puzzle(&board, &pieces, true).expect("Unable to solve puzzle");
             }
         }
     }
 
     #[test]
     fn solves_imperfect_puzzle() {
-        // custom piece for testing
-        // against open-square solutions exist
+        // custom piece for testing that nonperfect puzzles are solvable
         let pieces: Vec<Vec<Vec<bool>>> = vec![
             vec![
+                vec![false, true, false],
                 vec![true, true, true],
-                vec![true, true, true],
-                vec![true, true, true]
+                vec![false, true, false]
             ],
             vec![
+                vec![false, true, false],
                 vec![true, true, true],
-                vec![true, true, true],
-                vec![false, false, false]
+                vec![false, true, false]
             ]
         ];
 
-        // iterate through all possible month, day combinations
         // define board
         #[rustfmt::skip]
         let board: Vec<Vec<bool>> = vec![
@@ -978,6 +986,6 @@ mod tests {
         .map(|y| y.iter().map(|x| *x == 1).collect())
         .collect();
 
-        solve_puzzle(&board, &pieces).expect("Unable to solve puzzle");
+        solve_puzzle(&board, &pieces, false).expect("Unable to solve puzzle");
     }
 }

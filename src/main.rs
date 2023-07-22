@@ -97,6 +97,6 @@ fn main() {
     ).iter().map(|piece| piece.iter().map(|x_arr| x_arr.iter().map(|x| *x == 1).collect()).collect()).collect();
 
     // solve puzzle
-    let solution = solve_puzzle(&board, &pieces).expect("Unable to solve puzzle");
+    let solution = solve_puzzle(&board, &pieces, true).expect("Unable to solve puzzle");
     print!("{}", solution);
 }

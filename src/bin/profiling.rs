@@ -82,7 +82,7 @@ fn main() {
             *day_square = false;
 
             // solve puzzle
-            shapesie::solve_puzzle(&board, &pieces).expect("Unable to solve puzzle");
+            shapesie::solve_puzzle(&board, &pieces, true).expect("Unable to solve puzzle");
         }
     }
 }
